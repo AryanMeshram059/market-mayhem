@@ -4,12 +4,20 @@ import { useGameState } from '@/hooks/useGameState';
 import { formatTimeRemaining, phaseDisplayName } from '@/lib/format';
 
 export function GameClock() {
-  const { gameState, loading } = useGameState();
+  const { gameState, loading, error } = useGameState();
 
   if (loading || !gameState) {
     return (
       <div className="rounded-lg border bg-card p-4 animate-pulse">
         <div className="h-6 w-32 bg-muted rounded" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+        Live market data is temporarily unavailable.
       </div>
     );
   }

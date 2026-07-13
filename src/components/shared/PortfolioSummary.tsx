@@ -4,10 +4,18 @@ import { usePortfolio } from '@/hooks/usePortfolio';
 import { formatCurrency } from '@/lib/format';
 
 export function PortfolioSummary() {
-  const { data: portfolio, isLoading } = usePortfolio();
+  const { data: portfolio, isLoading, error } = usePortfolio();
 
   if (isLoading || !portfolio) {
     return <div className="rounded-lg border bg-card p-4 animate-pulse h-40" />;
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+        Unable to load your portfolio right now.
+      </div>
+    );
   }
 
   return (

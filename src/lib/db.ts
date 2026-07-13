@@ -67,7 +67,7 @@ export async function closePool(): Promise<void> {
  */
 interface ConnectionOptions {
   teamId?: number;
-  role?: 'team' | 'game_engine' | 'admin';
+  role?: 'team' | 'game_engine' | 'admin' | 'auth';
 }
 
 /**
@@ -168,6 +168,23 @@ export async function getGameEngineConnection(): Promise<PoolClient> {
 
   try {
     await setRLSContext(client, { role: 'game_engine' });
+  } catch (error) {
+    client.release();
+    throw error;
+  }
+
+  return client;
+}
+
+/**
+ * Get a database connection for authentication/session operations.
+ * Sessions are managed via the dedicated auth role so RLS policies can be enforced.
+ */
+export async function getAuthConnection(): Promise<PoolClient> {
+  const client = await getPool().connect();
+
+  try {
+    await setRLSContext(client, { role: 'auth' });
   } catch (error) {
     client.release();
     throw error;
@@ -345,6 +362,23 @@ export async function queryAsGameEngine(
   values?: any[]
 ): Promise<QueryResult['rows']> {
   const client = await getGameEngineConnection();
+
+  try {
+    const result = await client.query(sql, values);
+    return result.rows;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Execute a query with auth/session permissions.
+ */
+export async function queryAsAuth(
+  sql: string,
+  values?: any[]
+): Promise<QueryResult['rows']> {
+  const client = await getAuthConnection();
 
   try {
     const result = await client.query(sql, values);

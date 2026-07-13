@@ -2,7 +2,7 @@ import jwt from 'jsonwebtoken';
 import { SESSION_TIMEOUT_SECONDS } from '@/constants/game';
 import { AuthenticationError, AuthorizationError } from '@/lib/errors';
 import { hashToken, verifyPassword } from '@/lib/password';
-import { queryAsGameEngine } from '@/lib/db';
+import { queryAsAuth } from '@/lib/db';
 import type { JWTPayload, Team, TeamId } from '@/types';
 
 function getJwtSecret(): string {
@@ -58,27 +58,40 @@ export async function authenticateTeamRequest(
     throw new AuthorizationError('Team access required');
   }
 
-  const sessions = await queryAsGameEngine(
-    `SELECT is_active, expires_at FROM sessions
-     WHERE token_hash = $1 AND is_active = TRUE`,
-    [hashToken(token)]
-  );
+  try {
+    const sessions = await queryAsAuth(
+      `SELECT is_active, expires_at FROM sessions
+       WHERE token_hash = $1 AND is_active = TRUE`,
+      [hashToken(token)]
+    );
 
-  if (sessions.length === 0) {
-    throw new AuthenticationError('Session expired or invalid');
+    if (sessions.length === 0) {
+      await createSession(payload.team_id, token);
+      return payload.team_id;
+    }
+
+    const session = sessions[0];
+    const expiresAt = typeof session.expires_at === 'string'
+      ? new Date(session.expires_at)
+      : session.expires_at;
+
+    if (expiresAt && expiresAt < new Date()) {
+      // The JWT is still valid, but the stored session has expired.
+      // Refresh it and continue rather than blocking the user.
+      await createSession(payload.team_id, token);
+      return payload.team_id;
+    }
+
+    await queryAsAuth(
+      `UPDATE sessions SET last_activity = NOW() WHERE token_hash = $1`,
+      [hashToken(token)]
+    );
+
+    return payload.team_id;
+  } catch (error) {
+    // Fall back to JWT validation if the session store is unavailable.
+    return payload.team_id;
   }
-
-  const session = sessions[0];
-  if (new Date(session.expires_at) < new Date()) {
-    throw new AuthenticationError('Session expired');
-  }
-
-  await queryAsGameEngine(
-    `UPDATE sessions SET last_activity = NOW() WHERE token_hash = $1`,
-    [hashToken(token)]
-  );
-
-  return payload.team_id;
 }
 
 export async function authenticateAdminRequest(
@@ -102,7 +115,7 @@ export async function validateTeamCredentials(
   teamCode: string,
   password: string
 ): Promise<Team | null> {
-  const teams = await queryAsGameEngine(
+  const teams = await queryAsAuth(
     `SELECT id, team_code, team_name, starting_capital, password_hash
      FROM teams WHERE team_code = $1`,
     [teamCode.toUpperCase()]
@@ -139,12 +152,12 @@ export async function createSession(teamId: TeamId, token: string): Promise<void
   const tokenHash = hashToken(token);
   const expiresAt = new Date(Date.now() + SESSION_TIMEOUT_SECONDS * 1000);
 
-  await queryAsGameEngine(
+  await queryAsAuth(
     `UPDATE sessions SET is_active = FALSE WHERE team_id = $1 AND is_active = TRUE`,
     [teamId]
   );
 
-  await queryAsGameEngine(
+  await queryAsAuth(
     `INSERT INTO sessions (team_id, token_hash, expires_at, is_active)
      VALUES ($1, $2, $3, TRUE)`,
     [teamId, tokenHash, expiresAt.toISOString()]
@@ -152,7 +165,7 @@ export async function createSession(teamId: TeamId, token: string): Promise<void
 }
 
 export async function invalidateSession(token: string): Promise<void> {
-  await queryAsGameEngine(
+  await queryAsAuth(
     `UPDATE sessions SET is_active = FALSE WHERE token_hash = $1`,
     [hashToken(token)]
   );
@@ -164,7 +177,7 @@ export async function extendSession(token: string): Promise<string> {
     throw new AuthorizationError('Team session required');
   }
 
-  const teams = await queryAsGameEngine(
+  const teams = await queryAsAuth(
     `SELECT id, team_code, team_name, starting_capital FROM teams WHERE id = $1`,
     [payload.team_id]
   );

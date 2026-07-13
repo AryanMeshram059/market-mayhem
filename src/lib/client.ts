@@ -3,6 +3,12 @@
 const TOKEN_KEY = 'mm_token';
 const TEAM_KEY = 'mm_team';
 
+function emitAuthChange() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('mm-auth'));
+  }
+}
+
 export function getToken(): string | null {
   if (typeof window === 'undefined') return null;
   return localStorage.getItem(TOKEN_KEY);
@@ -18,19 +24,23 @@ export function setToken(token: string, team?: { id: number; name: string }) {
   if (team) {
     localStorage.setItem(TEAM_KEY, JSON.stringify(team));
   }
+  emitAuthChange();
 }
 
 export function setAdminToken(token: string) {
   localStorage.setItem('mm_admin_token', token);
+  emitAuthChange();
 }
 
 export function clearToken() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(TEAM_KEY);
+  emitAuthChange();
 }
 
 export function clearAdminToken() {
   localStorage.removeItem('mm_admin_token');
+  emitAuthChange();
 }
 
 export function getTeamInfo(): { id: number; name: string } | null {
