@@ -1,0 +1,1 @@
+export { calculateFinalScore } from './portfolio';
