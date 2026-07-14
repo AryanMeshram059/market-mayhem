@@ -1,16 +1,10 @@
-import { authenticateTeamRequest } from '@/services/auth';
-import { checkRateLimit } from '@/services/rateLimit';
-import { checkAndTransition } from '@/engine/round/stateMachine';
-import { getAuthHeader, handleApiError, withETag } from '@/lib/api';
+import { checkAndTransition } from '@/server/engine/state';
+import { fail, ok } from '@/server/http';
 
-export async function GET(request: Request) {
+export async function GET() {
   try {
-    const teamId = await authenticateTeamRequest(getAuthHeader(request));
-    await checkRateLimit(teamId);
-
-    const state = await checkAndTransition();
-    return withETag(request, state);
+    return ok(await checkAndTransition());
   } catch (error) {
-    return handleApiError(error);
+    return fail(error);
   }
 }

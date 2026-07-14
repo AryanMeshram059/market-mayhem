@@ -1,15 +1,15 @@
-import { queryAsGameEngine } from '@/lib/db';
-import { getAuthHeader, handleApiError, jsonResponse } from '@/lib/api';
-import { authenticateTeamRequest } from '@/services/auth';
+import { query } from '@/server/db';
+import { fail, ok } from '@/server/http';
 
-export async function GET(request: Request) {
+export async function GET() {
   try {
-    await authenticateTeamRequest(getAuthHeader(request));
-    const funds = await queryAsGameEngine(
-      `SELECT id, fund_code, fund_name FROM funds WHERE is_cash = FALSE ORDER BY fund_code`
+    const funds = await query(
+      `SELECT id, fund_code, fund_name, is_cash, current_nav, last_nav_update
+       FROM funds
+       ORDER BY is_cash ASC, fund_code ASC`
     );
-    return jsonResponse(funds);
+    return ok(funds);
   } catch (error) {
-    return handleApiError(error);
+    return fail(error);
   }
 }

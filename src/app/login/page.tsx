@@ -1,79 +1,60 @@
 'use client';
 
-import { useState } from 'react';
+import { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { setToken } from '@/lib/client';
-import { Button } from '@/components/ui/button';
+import { apiRequest } from '@/lib/browserApi';
 
-export default function LoginPage() {
+export default function TeamLoginPage() {
   const router = useRouter();
-  const [teamCode, setTeamCode] = useState('');
-  const [password, setPassword] = useState('');
+  const [teamCode, setTeamCode] = useState('TEAM_001');
+  const [password, setPassword] = useState('team_001123');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     setLoading(true);
-
+    setError('');
     try {
-      const response = await fetch('/api/auth/login', {
+      const data = await apiRequest<{
+        token: string;
+        team_id: number;
+        team_name: string;
+      }>('/api/auth/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ team_code: teamCode, password }),
+        body: { team_code: teamCode, password },
       });
-      const data = await response.json();
-
-      if (!response.ok) {
-        setError(data.error?.message ?? 'Login failed');
-        return;
-      }
-
-      setToken(data.token, { id: data.team_id, name: data.team_name });
+      localStorage.setItem('team_token', data.token);
+      localStorage.setItem('team_name', data.team_name);
       router.push('/dashboard');
-    } catch {
-      setError('Connection failed. Please try again.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Login failed');
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-4 rounded-lg border bg-card p-6 shadow-sm">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold">Market Mayhem</h1>
-          <p className="text-sm text-muted-foreground mt-1">Team Login</p>
-        </div>
-
-        <input
-          type="text"
-          placeholder="Team Code (e.g. TEAM_001)"
-          value={teamCode}
-          onChange={(e) => setTeamCode(e.target.value)}
-          className="w-full rounded-md border px-3 py-2 text-sm"
-          required
-        />
-        <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="w-full rounded-md border px-3 py-2 text-sm"
-          required
-        />
-
-        {error && <p className="text-sm text-red-600">{error}</p>}
-
-        <Button type="submit" className="w-full" disabled={loading}>
-          {loading ? 'Signing in...' : 'Sign In'}
-        </Button>
-
-        <p className="text-xs text-center text-muted-foreground">
-          Default: TEAM_001 / team_001123
-        </p>
-      </form>
-    </div>
+    <main>
+      <section className="panel narrow">
+        <h1>Team Login</h1>
+        <form onSubmit={submit} className="stack">
+          <label>
+            Team code
+            <input value={teamCode} onChange={(e) => setTeamCode(e.target.value)} />
+          </label>
+          <label>
+            Password
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </label>
+          <button disabled={loading}>{loading ? 'Logging in...' : 'Login'}</button>
+          {error ? <p className="error">{error}</p> : null}
+        </form>
+      </section>
+    </main>
   );
 }

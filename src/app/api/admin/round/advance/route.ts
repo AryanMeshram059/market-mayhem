@@ -1,13 +1,12 @@
-import { authenticateAdminRequest } from '@/services/auth';
-import { forceAdvancePhase } from '@/engine/round/stateMachine';
-import { getAuthHeader, handleApiError, jsonResponse } from '@/lib/api';
+import { authenticateAdmin } from '@/server/auth';
+import { forceAdvance } from '@/server/engine/state';
+import { authHeader, fail, ok } from '@/server/http';
 
 export async function POST(request: Request) {
   try {
-    const adminUsername = await authenticateAdminRequest(getAuthHeader(request));
-    const state = await forceAdvancePhase(adminUsername);
-    return jsonResponse({ round: state.round, phase: state.phase });
+    const admin = await authenticateAdmin(authHeader(request));
+    return ok(await forceAdvance(admin));
   } catch (error) {
-    return handleApiError(error);
+    return fail(error);
   }
 }

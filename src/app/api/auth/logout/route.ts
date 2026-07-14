@@ -1,20 +1,14 @@
-import { invalidateSession, authenticateTeamRequest } from '@/services/auth';
-import { auditLog } from '@/services/auditLog';
-import { getAuthHeader, handleApiError, jsonResponse } from '@/lib/api';
+import { logoutToken } from '@/server/auth';
+import { authHeader, fail, ok } from '@/server/http';
 
 export async function POST(request: Request) {
   try {
-    const authHeader = getAuthHeader(request);
-    const teamId = await authenticateTeamRequest(authHeader);
-
-    if (authHeader?.startsWith('Bearer ')) {
-      const token = authHeader.substring(7);
-      await invalidateSession(token);
-      await auditLog('logout', { teamId, details: {} });
+    const header = authHeader(request);
+    if (header?.startsWith('Bearer ')) {
+      await logoutToken(header.slice('Bearer '.length));
     }
-
-    return jsonResponse({ success: true });
+    return ok({ success: true });
   } catch (error) {
-    return handleApiError(error);
+    return fail(error);
   }
 }

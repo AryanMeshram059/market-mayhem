@@ -1,27 +1,17 @@
-import { authenticateTeamRequest, createSession, generateTeamToken, validateTeamCredentials } from '@/services/auth';
-import { auditLog } from '@/services/auditLog';
-import { getAuthHeader, handleApiError, jsonResponse } from '@/lib/api';
+import { loginTeam } from '@/server/auth';
+import { fail, ok } from '@/server/http';
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { team_code, password } = body;
-
-    if (!team_code || !password) {
-      return jsonResponse({ error: { code: 'VALIDATION_ERROR', message: 'Team code and password required' } }, 400);
-    }
-
-    const team = await validateTeamCredentials(team_code, password);
-    if (!team) {
-      return jsonResponse({ error: { code: 'AUTHENTICATION_ERROR', message: 'Invalid credentials' } }, 401);
-    }
-
-    const token = generateTeamToken(team);
-    await createSession(team.id, token);
-    await auditLog('login', { teamId: team.id, details: { team_code: team.team_code } });
-
-    return jsonResponse({ token, team_id: team.id, team_name: team.team_name });
+    const result = await loginTeam(String(body.team_code ?? ''), String(body.password ?? ''));
+    return ok({
+      token: result.token,
+      team_id: result.team.id,
+      team_code: result.team.team_code,
+      team_name: result.team.team_name,
+    });
   } catch (error) {
-    return handleApiError(error);
+    return fail(error);
   }
 }
