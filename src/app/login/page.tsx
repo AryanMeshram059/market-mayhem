@@ -1,13 +1,17 @@
 'use client';
 
 import { FormEvent, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { apiRequest } from '@/lib/browserApi';
 
 export default function TeamLoginPage() {
   const router = useRouter();
-  const [teamCode, setTeamCode] = useState('TEAM_001');
-  const [password, setPassword] = useState('team_001123');
+  const [teamCode, setTeamCode] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -35,26 +39,38 @@ export default function TeamLoginPage() {
   }
 
   return (
-    <main>
-      <section className="panel narrow">
-        <h1>Team Login</h1>
-        <form onSubmit={submit} className="stack">
-          <label>
-            Team code
-            <input value={teamCode} onChange={(e) => setTeamCode(e.target.value)} />
-          </label>
-          <label>
-            Password
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </label>
-          <button disabled={loading}>{loading ? 'Logging in...' : 'Login'}</button>
-          {error ? <p className="error">{error}</p> : null}
-        </form>
-      </section>
+    <main className="dark flex min-h-screen items-center justify-center bg-background p-6 text-foreground">
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <CardTitle className="font-mono">Team Login</CardTitle>
+          <CardDescription>Use the team code and password assigned for the game.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={submit} className="space-y-4">
+            <label className="block space-y-1.5 text-sm font-medium">
+              <span>Team code</span>
+              <Input value={teamCode} onChange={(event) => setTeamCode(event.target.value)} autoComplete="username" required />
+            </label>
+            <label className="block space-y-1.5 text-sm font-medium">
+              <span>Password</span>
+              <Input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete="current-password"
+                required
+              />
+            </label>
+            {error ? <p className="error text-sm">{error}</p> : null}
+            <Button type="submit" disabled={loading} className="w-full">
+              {loading ? 'Logging in...' : 'Login'}
+            </Button>
+            <Link className="block text-center text-sm text-muted-foreground hover:text-foreground" href="/">
+              Back to role selection
+            </Link>
+          </form>
+        </CardContent>
+      </Card>
     </main>
   );
 }
