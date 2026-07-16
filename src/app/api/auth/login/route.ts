@@ -4,7 +4,7 @@ import { fail, ok } from '@/server/http';
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const result = await loginTeam(String(body.team_code ?? ''), String(body.password ?? ''));
+    const result = await loginTeam(String(body.team_identity ?? body.team_code ?? body.team_name ?? ''), String(body.password ?? ''));
     return ok({
       token: result.token,
       team_id: result.team.id,

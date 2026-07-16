@@ -1,7 +1,7 @@
-import { BROKERAGE_RATE, P2P_MAX_TRADE_VALUE } from '@/domain/constants';
+import { BROKERAGE_RATE, P2P_MAX_TRADE_VALUE, TOTAL_ROUNDS } from '@/domain/constants';
 import type { OrderType } from '@/domain/types';
 import { audit } from '../audit';
-import { query, type PoolClient } from '../db';
+import { query, transaction, type PoolClient } from '../db';
 import { badRequest, notFound } from '../errors';
 import { money, quantity } from './math';
 
@@ -13,12 +13,82 @@ interface P2PTrade {
   quantity: string;
   agreed_price: string;
   proposer_direction: OrderType;
+  round: number;
 }
 
 function buyerSeller(trade: P2PTrade): { buyerId: number; sellerId: number } {
   return trade.proposer_direction === 'buy'
     ? { buyerId: trade.proposer_team_id, sellerId: trade.counterparty_team_id }
     : { buyerId: trade.counterparty_team_id, sellerId: trade.proposer_team_id };
+}
+
+async function currentNavForFund(fundId: number): Promise<number> {
+  const rows = await query<{ current_nav: string }>(
+    `SELECT current_nav FROM funds WHERE id = $1 AND is_cash = FALSE`,
+    [fundId],
+  );
+  if (!rows[0]) {
+    badRequest('Invalid tradable fund');
+  }
+  return Number(rows[0].current_nav);
+}
+
+function feeForTradeValue(value: number): number {
+  return value * BROKERAGE_RATE;
+}
+
+async function reserveBuyCash(client: PoolClient, teamId: number, reserveAmount: number): Promise<void> {
+  const rows = await client.query<{ cash: string }>(
+    `SELECT cash FROM portfolios WHERE team_id = $1 FOR UPDATE`,
+    [teamId],
+  );
+  const availableCash = Number(rows.rows[0]?.cash ?? 0);
+  if (availableCash < reserveAmount) {
+    badRequest('Insufficient cash to post this buy offer');
+  }
+  await client.query(
+    `UPDATE portfolios SET cash = cash - $1, last_updated = NOW() WHERE team_id = $2`,
+    [money(reserveAmount), teamId],
+  );
+}
+
+async function reserveSellUnits(client: PoolClient, teamId: number, fundId: number, qty: number): Promise<void> {
+  const rows = await client.query<{ quantity: string }>(
+    `SELECT quantity FROM holdings WHERE team_id = $1 AND fund_id = $2 FOR UPDATE`,
+    [teamId, fundId],
+  );
+  const available = Number(rows.rows[0]?.quantity ?? 0);
+  if (available < qty) {
+    badRequest('Insufficient holdings to post this sell offer');
+  }
+  await client.query(
+    `UPDATE holdings SET quantity = quantity - $1, last_updated = NOW() WHERE team_id = $2 AND fund_id = $3`,
+    [quantity(qty), teamId, fundId],
+  );
+}
+
+async function releaseLockedOffer(client: PoolClient, trade: P2PTrade): Promise<void> {
+  const qty = Number(trade.quantity);
+  const price = Number(trade.agreed_price);
+  const value = qty * price;
+  const fee = feeForTradeValue(value);
+
+  if (trade.proposer_direction === 'buy') {
+    await client.query(
+      `UPDATE portfolios SET cash = cash + $1, last_updated = NOW() WHERE team_id = $2`,
+      [money(value + fee), trade.proposer_team_id],
+    );
+    return;
+  }
+
+  await client.query(
+    `INSERT INTO holdings (team_id, fund_id, quantity, last_updated)
+     VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (team_id, fund_id)
+     DO UPDATE SET quantity = holdings.quantity + EXCLUDED.quantity,
+                   last_updated = NOW()`,
+    [trade.proposer_team_id, trade.fund_id, quantity(qty)],
+  );
 }
 
 export async function proposeP2P(input: {
@@ -36,7 +106,12 @@ export async function proposeP2P(input: {
   if (input.quantity <= 0 || input.price <= 0) {
     badRequest('Quantity and price must be positive');
   }
-  if (input.quantity * input.price > P2P_MAX_TRADE_VALUE) {
+  if (input.round < 1 || input.round > TOTAL_ROUNDS) {
+    badRequest('Invalid round');
+  }
+
+  const value = input.quantity * input.price;
+  if (value > P2P_MAX_TRADE_VALUE) {
     badRequest('P2P trade value cannot exceed Rs 10 Cr');
   }
 
@@ -44,157 +119,199 @@ export async function proposeP2P(input: {
     `SELECT 1 FROM teams WHERE id = $1
      UNION ALL
      SELECT 1 FROM teams WHERE id = $2`,
-    [input.proposerTeamId, input.counterpartyTeamId]
+    [input.proposerTeamId, input.counterpartyTeamId],
   );
   if (exists.length !== 2) {
     badRequest('Invalid P2P team');
   }
 
-  const fund = await query(`SELECT 1 FROM funds WHERE id = $1 AND is_cash = FALSE`, [
-    input.fundId,
-  ]);
-  if (fund.length === 0) {
-    badRequest('Invalid tradable fund');
+  const nav = await currentNavForFund(input.fundId);
+  const deviation = Math.abs(input.price - nav) / nav;
+  if (deviation > 0.03) {
+    badRequest('P2P offer price must stay within +/-3% of current NAV');
   }
 
-  const rows = await query<{ id: string }>(
-    `INSERT INTO p2p_trades
-       (proposer_team_id, counterparty_team_id, fund_id, quantity,
-        agreed_price, proposer_direction, status)
-     VALUES ($1, $2, $3, $4, $5, $6, 'awaiting_approval')
-     RETURNING id`,
-    [
-      input.proposerTeamId,
-      input.counterpartyTeamId,
-      input.fundId,
-      quantity(input.quantity),
-      input.price,
-      input.direction,
-    ]
-  );
+  return transaction(async (client) => {
+    if (input.direction === 'buy') {
+      await reserveBuyCash(client, input.proposerTeamId, value + feeForTradeValue(value));
+    } else {
+      await reserveSellUnits(client, input.proposerTeamId, input.fundId, input.quantity);
+    }
 
-  await audit({
-    event_type: 'p2p_proposed',
-    team_id: input.proposerTeamId,
-    round: input.round,
-    event_data: { trade_id: rows[0].id, ...input },
-  });
+    const rows = await client.query<{ id: string }>(
+      `INSERT INTO p2p_trades
+         (proposer_team_id, counterparty_team_id, fund_id, quantity,
+          agreed_price, proposer_direction, status, round)
+       VALUES ($1, $2, $3, $4, $5, $6, 'awaiting_approval', $7)
+       RETURNING id`,
+      [
+        input.proposerTeamId,
+        input.counterpartyTeamId,
+        input.fundId,
+        quantity(input.quantity),
+        input.price,
+        input.direction,
+        input.round,
+      ],
+    );
 
-  return { trade_id: rows[0].id, status: 'awaiting_approval' };
-}
+    await audit({
+      event_type: 'p2p_proposed',
+      team_id: input.proposerTeamId,
+      round: input.round,
+      event_data: { trade_id: rows.rows[0].id, ...input },
+    });
 
-export async function setP2PApproval(
-  tradeId: string,
-  adminUsername: string,
-  approve: boolean
-): Promise<void> {
-  const rows = await query(
-    `UPDATE p2p_trades
-     SET status = $1, approved_by = $2, approved_at = NOW()
-     WHERE id = $3 AND status = 'awaiting_approval'
-     RETURNING id`,
-    [approve ? 'approved' : 'rejected', adminUsername, tradeId]
-  );
-  if (rows.length === 0) {
-    notFound('P2P trade not found or already processed');
-  }
-
-  await audit({
-    event_type: approve ? 'p2p_approved' : 'p2p_rejected',
-    admin_username: adminUsername,
-    event_data: { trade_id: tradeId },
+    return { trade_id: rows.rows[0].id, status: 'awaiting_approval' as const };
   });
 }
 
-async function executeOneP2P(client: PoolClient, trade: P2PTrade): Promise<void> {
-  const { buyerId, sellerId } = buyerSeller(trade);
-  const qty = Number(trade.quantity);
-  const price = Number(trade.agreed_price);
-  const value = qty * price;
-  if (value > P2P_MAX_TRADE_VALUE) {
-    throw new Error('P2P trade exceeds cap');
-  }
+export async function acceptP2P(tradeId: string, teamId: number): Promise<void> {
+  await transaction(async (client) => {
+    const tradeRows = await client.query<P2PTrade>(
+      `SELECT id, proposer_team_id, counterparty_team_id, fund_id, quantity, agreed_price, proposer_direction, round
+       FROM p2p_trades
+       WHERE id = $1
+       FOR UPDATE`,
+      [tradeId],
+    );
+    const trade = tradeRows.rows[0];
+    if (!trade) {
+      notFound('P2P trade not found');
+    }
+    if (trade.counterparty_team_id !== teamId) {
+      badRequest('Only the designated counterparty can accept this offer');
+    }
 
-  const orderedTeams = [buyerId, sellerId].sort((a, b) => a - b);
-  const portfolios = await client.query(
-    `SELECT team_id, cash FROM portfolios
-     WHERE team_id = ANY($1::int[])
-     ORDER BY team_id
-     FOR UPDATE`,
-    [orderedTeams]
-  );
-  const buyerCash = Number(
-    portfolios.rows.find((row) => Number(row.team_id) === buyerId)?.cash ?? 0
-  );
+    const statusRows = await client.query<{ status: string }>(
+      `SELECT status FROM p2p_trades WHERE id = $1 FOR UPDATE`,
+      [tradeId],
+    );
+    const status = statusRows.rows[0]?.status;
+    if (status !== 'awaiting_approval') {
+      badRequest('This offer has already been processed');
+    }
 
-  const sellerHolding = await client.query(
-    `SELECT quantity FROM holdings
-     WHERE team_id = $1 AND fund_id = $2
-     FOR UPDATE`,
-    [sellerId, trade.fund_id]
-  );
-  const sellerQty = Number(sellerHolding.rows[0]?.quantity ?? 0);
-  const fee = value * BROKERAGE_RATE;
-  const buyerCost = value + fee;
-  const sellerProceeds = value - fee;
+    const { buyerId, sellerId } = buyerSeller(trade);
+    const qty = Number(trade.quantity);
+    const price = Number(trade.agreed_price);
+    const value = qty * price;
+    const fee = feeForTradeValue(value);
+    const buyerCost = value + fee;
+    const sellerProceeds = value - fee;
 
-  if (buyerCash < buyerCost) {
-    throw new Error('Buyer has insufficient cash');
-  }
-  if (sellerQty < qty) {
-    throw new Error('Seller has insufficient holdings');
-  }
+    if (trade.proposer_direction === 'sell') {
+      const buyerPortfolio = await client.query<{ cash: string }>(
+        `SELECT cash FROM portfolios WHERE team_id = $1 FOR UPDATE`,
+        [buyerId],
+      );
+      const buyerCash = Number(buyerPortfolio.rows[0]?.cash ?? 0);
+      if (buyerCash < buyerCost) {
+        badRequest('Buyer has insufficient cash');
+      }
+      await client.query(
+        `UPDATE portfolios SET cash = cash - $1, last_updated = NOW() WHERE team_id = $2`,
+        [money(buyerCost), buyerId],
+      );
+    } else {
+      const sellerHolding = await client.query<{ quantity: string }>(
+        `SELECT quantity FROM holdings WHERE team_id = $1 AND fund_id = $2 FOR UPDATE`,
+        [sellerId, trade.fund_id],
+      );
+      const available = Number(sellerHolding.rows[0]?.quantity ?? 0);
+      if (available < qty) {
+        badRequest('Seller has insufficient holdings');
+      }
+      await client.query(
+        `UPDATE holdings SET quantity = quantity - $1, last_updated = NOW() WHERE team_id = $2 AND fund_id = $3`,
+        [quantity(qty), sellerId, trade.fund_id],
+      );
+    }
 
-  await client.query(`UPDATE portfolios SET cash = cash - $1, last_updated = NOW() WHERE team_id = $2`, [
-    money(buyerCost),
-    buyerId,
-  ]);
-  await client.query(`UPDATE portfolios SET cash = cash + $1, last_updated = NOW() WHERE team_id = $2`, [
-    money(sellerProceeds),
-    sellerId,
-  ]);
-  await client.query(
-    `UPDATE holdings SET quantity = quantity - $1, last_updated = NOW()
-     WHERE team_id = $2 AND fund_id = $3`,
-    [quantity(qty), sellerId, trade.fund_id]
-  );
-  await client.query(
-    `INSERT INTO holdings (team_id, fund_id, quantity, last_updated)
-     VALUES ($1, $2, $3, NOW())
-     ON CONFLICT (team_id, fund_id)
-     DO UPDATE SET quantity = holdings.quantity + EXCLUDED.quantity,
-                   last_updated = NOW()`,
-    [buyerId, trade.fund_id, quantity(qty)]
-  );
-  await client.query(
-    `UPDATE p2p_trades SET status = 'completed', executed_at = NOW(), error_message = NULL
-     WHERE id = $1`,
-    [trade.id]
-  );
+    await client.query(
+      `UPDATE portfolios SET cash = cash + $1, last_updated = NOW() WHERE team_id = $2`,
+      [money(sellerProceeds), sellerId],
+    );
+    await client.query(
+      `INSERT INTO holdings (team_id, fund_id, quantity, last_updated)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (team_id, fund_id)
+       DO UPDATE SET quantity = holdings.quantity + EXCLUDED.quantity,
+                     last_updated = NOW()`,
+      [buyerId, trade.fund_id, quantity(qty)],
+    );
+    await client.query(
+      `UPDATE p2p_trades
+       SET status = 'completed', executed_at = NOW(), error_message = NULL, accepted_by_team_id = $1
+       WHERE id = $2`,
+      [teamId, trade.id],
+    );
+
+    await audit({
+      event_type: 'p2p_executed',
+      round: trade.round,
+      event_data: { trade_id: trade.id, buyer_id: buyerId, seller_id: sellerId },
+    });
+  });
 }
 
-export async function executeApprovedP2P(client: PoolClient): Promise<void> {
+export async function setP2PApproval(tradeId: string, adminUsername: string, approve: boolean): Promise<void> {
+  if (approve) {
+    badRequest('Teams must accept offers directly from the trade window');
+  }
+
+  await transaction(async (client) => {
+    const tradeRows = await client.query<P2PTrade>(
+      `SELECT id, proposer_team_id, counterparty_team_id, fund_id, quantity, agreed_price, proposer_direction, round
+       FROM p2p_trades
+       WHERE id = $1 AND status = 'awaiting_approval'
+       FOR UPDATE`,
+      [tradeId],
+    );
+    const trade = tradeRows.rows[0];
+    if (!trade) {
+      notFound('P2P trade not found or already processed');
+    }
+
+    await releaseLockedOffer(client, trade);
+    await client.query(
+      `UPDATE p2p_trades
+       SET status = 'rejected', approved_by = $1, approved_at = NOW(), error_message = NULL
+       WHERE id = $2`,
+      [adminUsername, tradeId],
+    );
+
+    await audit({
+      event_type: 'p2p_rejected',
+      admin_username: adminUsername,
+      round: trade.round,
+      event_data: { trade_id: tradeId },
+    });
+  });
+}
+
+export async function expireOpenP2P(client: PoolClient, round: number): Promise<void> {
   const trades = await client.query<P2PTrade>(
-    `SELECT id, proposer_team_id, counterparty_team_id, fund_id, quantity,
-            agreed_price, proposer_direction
+    `SELECT id, proposer_team_id, counterparty_team_id, fund_id, quantity, agreed_price, proposer_direction, round
      FROM p2p_trades
-     WHERE status = 'approved'
-     ORDER BY approved_at NULLS LAST, created_at
-     FOR UPDATE`
+     WHERE round = $1 AND status = 'awaiting_approval'
+     FOR UPDATE`,
+    [round],
   );
 
   for (const trade of trades.rows) {
-    try {
-      await executeOneP2P(client, trade);
-      await audit({ event_type: 'p2p_executed', event_data: { trade_id: trade.id } });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'P2P execution failed';
-      await client.query(
-        `UPDATE p2p_trades SET status = 'failed', error_message = $1 WHERE id = $2`,
-        [message, trade.id]
-      );
-      await audit({ event_type: 'p2p_failed', event_data: { trade_id: trade.id, error: message } });
-    }
+    await releaseLockedOffer(client, trade);
+    await client.query(
+      `UPDATE p2p_trades
+       SET status = 'expired', error_message = 'Offer expired at round close'
+       WHERE id = $1`,
+      [trade.id],
+    );
+    await audit({
+      event_type: 'p2p_expired',
+      round,
+      event_data: { trade_id: trade.id },
+    });
   }
 }
 
@@ -206,7 +323,25 @@ export async function pendingP2P(): Promise<unknown[]> {
      JOIN teams pt ON pt.id = p.proposer_team_id
      JOIN teams ct ON ct.id = p.counterparty_team_id
      JOIN funds f ON f.id = p.fund_id
-     WHERE p.status IN ('awaiting_approval', 'approved')
-     ORDER BY p.created_at`
+     WHERE p.status = 'awaiting_approval'
+     ORDER BY p.created_at`,
+  );
+}
+
+export async function openP2POffers(teamId: number): Promise<unknown[]> {
+  return query(
+    `SELECT p.id, p.proposer_team_id, p.counterparty_team_id, p.quantity, p.agreed_price,
+            p.proposer_direction, p.status, p.created_at, p.round,
+            pt.team_name AS proposer_team_name,
+            ct.team_name AS counterparty_team_name,
+            f.fund_code, f.fund_name
+     FROM p2p_trades p
+     JOIN teams pt ON pt.id = p.proposer_team_id
+     JOIN teams ct ON ct.id = p.counterparty_team_id
+     JOIN funds f ON f.id = p.fund_id
+     WHERE p.status = 'awaiting_approval'
+       AND p.counterparty_team_id = $1
+     ORDER BY p.created_at DESC`,
+    [teamId],
   );
 }
