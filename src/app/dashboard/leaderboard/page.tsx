@@ -8,9 +8,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { TeamAccessGate, TeamPageHeader, money, useTeamDashboardData } from '@/components/team-dashboard';
 import { cn } from '@/lib/utils';
+import { useEffect, useState } from 'react';
 
 export default function LeaderboardPage() {
   const { token, teamName, teamId, leaderboard, gameState, loading, logout } = useTeamDashboardData();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const tradableNow = mounted && gameState?.phase === 'TRADING_OPEN' && !gameState.is_paused && gameState.time_remaining > 0;
 
   if (!token) {
     return <TeamAccessGate token={token} />;
@@ -38,11 +46,17 @@ export default function LeaderboardPage() {
               Overview
             </Button>
           </Link>
-          <Link href="/dashboard/trade" className="block">
-            <Button variant="outline" className="w-full">
-              Trade
+          {tradableNow ? (
+            <Link href="/dashboard/trade" className="block">
+              <Button variant="outline" className="w-full">
+                Trade
+              </Button>
+            </Link>
+          ) : (
+            <Button variant="outline" className="w-full" disabled>
+              Trade locked
             </Button>
-          </Link>
+          )}
         </div>
 
         <Card className="border-border/70 bg-card/95">

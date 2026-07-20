@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { ArrowRight, Search } from 'lucide-react';
-import { useDeferredValue, useMemo, useState } from 'react';
+import { useDeferredValue, useMemo, useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -20,7 +20,14 @@ export default function DashboardPage() {
   const { token, teamName, portfolio, gameState, loading, logout, tradableFunds, status, news } =
     useTeamDashboardData();
   const [query, setQuery] = useState('');
+  const [mounted, setMounted] = useState(false);
   const deferredQuery = useDeferredValue(query);
+  
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  
+  const tradableNow = mounted && gameState?.phase === 'TRADING_OPEN' && !gameState.is_paused && gameState.time_remaining > 0;
 
   const visibleFunds = useMemo(() => {
     const term = deferredQuery.trim().toLowerCase();
@@ -40,17 +47,12 @@ export default function DashboardPage() {
 
       <main className="mx-auto grid max-w-7xl gap-5 p-4 md:p-8 xl:grid-cols-[minmax(0,1.2fr)_380px]">
         <section className="space-y-5">
-          <StatCard
-            title="Available balance"
-            value={money(portfolio?.cash ?? 0)}
-            subtitle="Cash ready for the next move."
-          />
 
-          {gameState?.phase === 'NEWS_REVEAL' && news?.news ? (
+          {gameState?.phase !== 'IDLE' && news?.news ? (
             <Card className="border-border/70 bg-card/95">
               <CardHeader>
-                <CardTitle className="text-white">Read window</CardTitle>
-                <CardDescription>News is live. Trading stays locked until the countdown in the header ends.</CardDescription>
+                <CardTitle className="text-white">Current round news</CardTitle>
+                <CardDescription>Round {news.news.round} predefined news for this trading window.</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="rounded-lg border border-border/70 bg-background/50 p-4 text-sm leading-7 text-foreground">
@@ -63,17 +65,21 @@ export default function DashboardPage() {
           <Card className="border-border/70 bg-card/95">
             <CardHeader>
               <CardTitle className="text-white">Quick access</CardTitle>
-              <CardDescription>
-                Move to the focused pages instead of stacking everything on one screen.
-              </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-3 sm:grid-cols-2">
-              <Link href="/dashboard/trade" className="block">
-                <Button className="w-full justify-between" size="lg">
-                  Trade
+              {tradableNow ? (
+                <Link href="/dashboard/trade" className="block">
+                  <Button className="w-full justify-between" size="lg">
+                    Trade
+                    <ArrowRight />
+                  </Button>
+                </Link>
+              ) : (
+                <Button className="w-full justify-between" size="lg" disabled>
+                  Trade opens during the 5 min trading window
                   <ArrowRight />
                 </Button>
-              </Link>
+              )}
               <Link href="/dashboard/leaderboard" className="block">
                 <Button className="w-full justify-between" size="lg" variant="outline">
                   Leaderboard
@@ -89,10 +95,7 @@ export default function DashboardPage() {
             <CardHeader className="gap-4">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
-                  <CardTitle className="text-white">Market movements</CardTitle>
-                  <CardDescription>
-                    Only the live market prices stay here. Holdings and values remain inside portfolio.
-                  </CardDescription>
+                  <CardTitle className="text-white">Market</CardTitle>
                 </div>
                 <div className="relative min-w-0 lg:w-80">
                   <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />

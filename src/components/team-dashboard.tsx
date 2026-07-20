@@ -132,13 +132,9 @@ export function useTeamDashboardData() {
     }
 
     void syncDashboard();
-    const intervalId = window.setInterval(() => {
-      void loadDashboard(activeToken);
-    }, 10000);
 
     return () => {
       cancelled = true;
-      window.clearInterval(intervalId);
     };
   }, [token, fetchDashboardData, loadDashboard]);
 
@@ -201,6 +197,26 @@ export function TeamPageHeader({
   actions?: ReactNode;
   onLogout: () => void;
 }) {
+  const [displayTimeRemaining, setDisplayTimeRemaining] = useState(gameState?.time_remaining ?? 0);
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    // Update clock every second
+    const intervalId = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
+    // Calculate time remaining from phase_ends_at
+    if (!gameState || gameState.is_paused || !gameState.phase_ends_at) {
+      setDisplayTimeRemaining(gameState?.time_remaining ?? 0);
+      return;
+    }
+
+    const timeRemaining = Math.max(0, Math.ceil((new Date(gameState.phase_ends_at).getTime() - now) / 1000));
+    setDisplayTimeRemaining(timeRemaining);
+  }, [gameState, now]);
+
   return (
     <header className="border-b border-border/70 bg-[#0b0d0c] px-4 py-4 md:px-8">
       <div className="mx-auto flex max-w-7xl flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -218,7 +234,7 @@ export function TeamPageHeader({
               <Separator orientation="vertical" className="h-4" />
               <span>{phaseLabel(gameState)}</span>
               <Separator orientation="vertical" className="h-4" />
-              <span>{formatTime(gameState.time_remaining)}</span>
+              <span>{formatTime(displayTimeRemaining)}</span>
             </div>
           ) : null}
           {actions}
@@ -243,10 +259,9 @@ export function PortfolioPanel({
     <Card className="border-border/70 bg-card/95">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-white">
-          <Wallet className="size-5 text-primary" />
+          <Wallet className="size-7 text-primary" />
           Portfolio
         </CardTitle>
-        <CardDescription>Your quantities, values, and remaining cash all stay here.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
         {loading ? <div className="py-10 text-center text-sm text-muted-foreground">Loading portfolio...</div> : null}
@@ -282,6 +297,8 @@ export function PortfolioPanel({
 
 function HoldingCard({ holding, totalValue }: { holding: HoldingView; totalValue: number }) {
   const share = totalValue > 0 ? (holding.market_value / totalValue) * 100 : 0;
+  const returnColor = holding.total_return >= 0 ? 'text-emerald-400' : 'text-rose-400';
+  
   return (
     <div className="rounded-lg border border-border/70 bg-background/45 p-4">
       <div className="flex items-start justify-between gap-3">
@@ -289,14 +306,27 @@ function HoldingCard({ holding, totalValue }: { holding: HoldingView; totalValue
           <p className="font-medium text-white">{holding.fund_code}</p>
           <p className="text-xs text-muted-foreground">{holding.fund_name}</p>
         </div>
-        <Badge variant="outline">{units(holding.quantity)}</Badge>
+        <Badge variant="outline">{units(holding.quantity)} units </Badge>
       </div>
-      <div className="mt-3 flex items-center justify-between text-sm">
-        <span className="text-muted-foreground">Value</span>
-        <span className="font-mono">{money(holding.market_value)}</span>
-      </div>
-      <div className="mt-2 h-2 rounded-full bg-muted">
-        <div className="h-2 rounded-full bg-primary" style={{ width: `${Math.min(100, Math.max(0, share))}%` }} />
+      <div className="mt-3 grid gap-2 text-sm">
+        <div className="flex items-center justify-between">
+          <span className="text-muted-foreground">Buy Price</span>
+          <span className="font-mono text-cyan-400">{money(holding.avg_buy_price)}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-muted-foreground">Current NAV</span>
+          <span className="font-mono text-emerald-400">{money(holding.current_nav)}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-muted-foreground">Market Value</span>
+          <span className="font-mono text-blue-400">{money(holding.market_value)}</span>
+        </div>
+        <div className={`flex items-center justify-between`}>
+          <span className="text-muted-foreground">Total Return</span>
+          <span className={`font-mono ${returnColor}`}>
+            {money(holding.total_return)} ({holding.return_percentage.toFixed(2)}%)
+          </span>
+        </div>
       </div>
     </div>
   );

@@ -43,6 +43,10 @@ export interface HoldingView {
   quantity: number;
   current_nav: number;
   market_value: number;
+  avg_buy_price: number;
+  total_invested: number;
+  total_return: number;
+  return_percentage: number;
 }
 
 export interface PortfolioView {

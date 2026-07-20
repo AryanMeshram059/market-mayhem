@@ -1,4 +1,4 @@
-export const TOTAL_ROUNDS = 15;
+export const TOTAL_ROUNDS = 10;
 export const TOTAL_TEAMS = 20;
 export const INVESTABLE_FUNDS = 11;
 export const MAX_NAV_CHANGE = 0.6;

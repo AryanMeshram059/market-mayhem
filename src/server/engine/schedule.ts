@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { INVESTABLE_FUNDS, MAX_NAV_CHANGE, TOTAL_ROUNDS } from '@/domain/constants';
+import { PREDEFINED_SCHEDULE } from '@/domain/rounds';
 import type { SchedulePayload } from '@/domain/types';
 import { requiredEnv } from '@/lib/env';
 import { audit } from '../audit';
@@ -79,20 +80,33 @@ export async function storeSchedule(schedule: SchedulePayload, uploadedBy: strin
 }
 
 export async function latestSchedule(): Promise<SchedulePayload | null> {
-  const rows = await query<{ encrypted_data: string }>(
-    `SELECT encrypted_data FROM schedules ORDER BY created_at DESC LIMIT 1`
-  );
-  return rows[0] ? decryptSchedule(rows[0].encrypted_data) : null;
+  return PREDEFINED_SCHEDULE;
 }
 
 export async function applyRoundNavs(client: PoolClient, round: number): Promise<void> {
   const schedule = await latestSchedule();
   if (!schedule) {
+    console.warn(`No schedule available for round ${round}`);
+    return;
+  }
+
+  if (round < 1 || round > TOTAL_ROUNDS) {
+    console.warn(`Round ${round} is out of bounds (1-${TOTAL_ROUNDS})`);
     return;
   }
 
   for (const item of schedule.funds) {
+    if (!item.navValues || item.navValues.length < round) {
+      console.warn(`NAV data missing for ${item.fund_code} round ${round}`);
+      continue;
+    }
+    
     const nav = item.navValues[round - 1];
+    if (!Number.isFinite(nav) || nav <= 0) {
+      console.warn(`Invalid NAV value for ${item.fund_code} round ${round}: ${nav}`);
+      continue;
+    }
+    
     await client.query(
       `UPDATE funds
        SET current_nav = $1, last_nav_update = NOW()

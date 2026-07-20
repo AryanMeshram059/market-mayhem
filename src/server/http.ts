@@ -19,9 +19,11 @@ export function fail(error: unknown): NextResponse {
     );
   }
 
-  console.error(error);
+  const errorMsg = error instanceof Error ? error.message : String(error);
+  const errorStack = error instanceof Error ? error.stack : '';
+  console.error('Unhandled error:', errorMsg, errorStack);
   return NextResponse.json(
-    { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
+    { error: { code: 'INTERNAL_ERROR', message: `Internal server error: ${errorMsg}` } },
     { status: 500 }
   );
 }

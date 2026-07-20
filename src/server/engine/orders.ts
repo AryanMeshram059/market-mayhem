@@ -15,6 +15,61 @@ interface PendingOrder {
   created_at?: string;
 }
 
+async function addHoldingWithCostBasis(
+  client: PoolClient,
+  input: { teamId: number; fundId: number; qty: number; totalCost: number },
+): Promise<void> {
+  await client.query(
+    `INSERT INTO holdings
+       (team_id, fund_id, quantity, avg_buy_price, total_invested, quantity_bought, last_updated)
+     VALUES ($1, $2, $3, $4, $5, $3, NOW())
+     ON CONFLICT (team_id, fund_id)
+     DO UPDATE SET quantity = holdings.quantity + EXCLUDED.quantity,
+                   total_invested = holdings.total_invested + EXCLUDED.total_invested,
+                   quantity_bought = holdings.quantity_bought + EXCLUDED.quantity_bought,
+                   avg_buy_price = CASE
+                     WHEN holdings.quantity + EXCLUDED.quantity > 0
+                     THEN (holdings.total_invested + EXCLUDED.total_invested)
+                          / (holdings.quantity + EXCLUDED.quantity)
+                     ELSE 0
+                   END,
+                   last_updated = NOW()`,
+    [
+      input.teamId,
+      input.fundId,
+      quantity(input.qty),
+      money(input.totalCost / input.qty),
+      money(input.totalCost),
+    ],
+  );
+}
+
+async function subtractHoldingWithCostBasis(
+  client: PoolClient,
+  input: { teamId: number; fundId: number; qty: number },
+): Promise<void> {
+  await client.query(
+    `UPDATE holdings
+     SET quantity = quantity - $1,
+         total_invested = CASE
+           WHEN quantity - $1 <= 0 THEN 0
+           ELSE GREATEST(
+             0,
+             total_invested - (
+               COALESCE(NULLIF(avg_buy_price, 0), total_invested / NULLIF(quantity, 0), 0) * $1
+             )
+           )
+         END,
+         avg_buy_price = CASE
+           WHEN quantity - $1 <= 0 THEN 0
+           ELSE COALESCE(NULLIF(avg_buy_price, 0), total_invested / NULLIF(quantity, 0), 0)
+         END,
+         last_updated = NOW()
+     WHERE team_id = $2 AND fund_id = $3`,
+    [quantity(input.qty), input.teamId, input.fundId],
+  );
+}
+
 async function currentRoundAndPhase(client?: PoolClient): Promise<{ round: number; phase: string }> {
   const row = client
     ? (await client.query(`SELECT current_round, current_phase FROM game_state WHERE id = 1`)).rows[0]
@@ -229,76 +284,93 @@ async function executeOne(
   client: PoolClient,
   order: PendingOrder,
   priorExposure: number,
-): Promise<{ buyOrderValue: number }> {
-  const fund = await client.query(
-    `SELECT current_nav FROM funds WHERE id = $1 AND is_cash = FALSE FOR SHARE`,
-    [order.fund_id],
-  );
-  if (!fund.rows[0]) {
-    throw new Error('Invalid fund');
-  }
+): Promise<{ success: boolean; buyOrderValue: number; error?: string }> {
+  try {
+    try {
+      const fund = await client.query(
+        `SELECT current_nav FROM funds WHERE id = $1 AND is_cash = FALSE FOR SHARE`,
+        [order.fund_id],
+      );
+      if (!fund.rows[0]) {
+        return { success: false, buyOrderValue: 0, error: 'Invalid fund' };
+      }
 
-  const team = await client.query(`SELECT starting_capital FROM teams WHERE id = $1 FOR SHARE`, [order.team_id]);
-  const startingCapital = Number(team.rows[0]?.starting_capital ?? STARTING_CAPITAL);
-  const nav = Number(fund.rows[0].current_nav);
-  const qty = Number(order.quantity);
+      const team = await client.query(`SELECT starting_capital FROM teams WHERE id = $1 FOR SHARE`, [order.team_id]);
+      const startingCapital = Number(team.rows[0]?.starting_capital ?? STARTING_CAPITAL);
+      const nav = Number(fund.rows[0].current_nav);
+      const qty = Number(order.quantity);
 
-  if (order.order_type === 'buy') {
-    const totals = buyExecutionTotals(nav, qty, startingCapital, priorExposure);
-    const cash = await client.query(`SELECT cash FROM portfolios WHERE team_id = $1 FOR UPDATE`, [order.team_id]);
-    const balance = Number(cash.rows[0]?.cash ?? 0);
-    if (balance < totals.total) {
-      throw new Error('Insufficient cash');
+      if (order.order_type === 'buy') {
+        const totals = buyExecutionTotals(nav, qty, startingCapital, priorExposure);
+        const cash = await client.query(`SELECT cash FROM portfolios WHERE team_id = $1 FOR UPDATE`, [order.team_id]);
+        const balance = Number(cash.rows[0]?.cash ?? 0);
+        if (balance < totals.total) {
+          return { success: false, buyOrderValue: 0, error: 'Insufficient cash' };
+        }
+
+        await client.query(
+          `UPDATE portfolios SET cash = cash - $1, last_updated = NOW() WHERE team_id = $2`,
+          [money(totals.total), order.team_id],
+        );
+        
+        await addHoldingWithCostBasis(client, {
+          teamId: order.team_id,
+          fundId: order.fund_id,
+          qty,
+          totalCost: totals.total,
+        });
+        await recordExecution(
+          client,
+          order,
+          nav,
+          totals.effectiveNav,
+          totals.slippage,
+          totals.fee,
+          totals.total,
+          'completed',
+        );
+        return { success: true, buyOrderValue: totals.orderValue };
+      }
+
+      const holding = await client.query(
+        `SELECT quantity FROM holdings WHERE team_id = $1 AND fund_id = $2 FOR UPDATE`,
+        [order.team_id, order.fund_id],
+      );
+      const available = Number(holding.rows[0]?.quantity ?? 0);
+      if (available < qty) {
+        return { success: false, buyOrderValue: 0, error: 'Insufficient holdings' };
+      }
+
+      const gross = qty * nav;
+      const fee = brokerage(gross);
+      const proceeds = gross - fee;
+      await subtractHoldingWithCostBasis(client, {
+        teamId: order.team_id,
+        fundId: order.fund_id,
+        qty,
+      });
+      await client.query(
+        `UPDATE portfolios SET cash = cash + $1, last_updated = NOW() WHERE team_id = $2`,
+        [money(proceeds), order.team_id],
+      );
+      await recordExecution(client, order, nav, nav, 0, fee, proceeds, 'completed');
+      return { success: true, buyOrderValue: 0 };
+    } catch (queryError) {
+      // Query failed - could be business logic validation or database error
+      const msg = queryError instanceof Error ? queryError.message : String(queryError);
+      
+      // If it's a transaction abort, propagate it (this is a real error)
+      if (msg.includes('transaction is aborted')) {
+        throw queryError;
+      }
+      
+      // Otherwise treat as business logic failure
+      return { success: false, buyOrderValue: 0, error: msg };
     }
-
-    await client.query(
-      `UPDATE portfolios SET cash = cash - $1, last_updated = NOW() WHERE team_id = $2`,
-      [money(totals.total), order.team_id],
-    );
-    await client.query(
-      `INSERT INTO holdings (team_id, fund_id, quantity, last_updated)
-       VALUES ($1, $2, $3, NOW())
-       ON CONFLICT (team_id, fund_id)
-       DO UPDATE SET quantity = holdings.quantity + EXCLUDED.quantity,
-                     last_updated = NOW()`,
-      [order.team_id, order.fund_id, quantity(qty)],
-    );
-    await recordExecution(
-      client,
-      order,
-      nav,
-      totals.effectiveNav,
-      totals.slippage,
-      totals.fee,
-      totals.total,
-      'completed',
-    );
-    return { buyOrderValue: totals.orderValue };
+  } catch (error) {
+    // Any unexpected errors get re-thrown to abort transaction
+    throw error;
   }
-
-  const holding = await client.query(
-    `SELECT quantity FROM holdings WHERE team_id = $1 AND fund_id = $2 FOR UPDATE`,
-    [order.team_id, order.fund_id],
-  );
-  const available = Number(holding.rows[0]?.quantity ?? 0);
-  if (available < qty) {
-    throw new Error('Insufficient holdings');
-  }
-
-  const gross = qty * nav;
-  const fee = brokerage(gross);
-  const proceeds = gross - fee;
-  await client.query(
-    `UPDATE holdings SET quantity = quantity - $1, last_updated = NOW()
-     WHERE team_id = $2 AND fund_id = $3`,
-    [quantity(qty), order.team_id, order.fund_id],
-  );
-  await client.query(
-    `UPDATE portfolios SET cash = cash + $1, last_updated = NOW() WHERE team_id = $2`,
-    [money(proceeds), order.team_id],
-  );
-  await recordExecution(client, order, nav, nav, 0, fee, proceeds, 'completed');
-  return { buyOrderValue: 0 };
 }
 
 async function recordExecution(
@@ -338,31 +410,45 @@ async function recordExecution(
 }
 
 export async function executePendingOrders(client: PoolClient, round: number): Promise<void> {
-  const orders = await client.query<PendingOrder>(
-    `SELECT id, team_id, fund_id, order_type, quantity, round
-     FROM pending_orders
-     WHERE round = $1
-     ORDER BY created_at, id
-     FOR UPDATE`,
-    [round],
-  );
+  try {
+    const orders = await client.query<PendingOrder>(
+      `SELECT id, team_id, fund_id, order_type, quantity, round
+       FROM pending_orders
+       WHERE round = $1
+       ORDER BY created_at, id`,
+      [round],
+    );
 
-  const exposureByTeamFund = new Map<string, number>();
-  for (const order of orders.rows) {
-    const exposureKey = `${order.team_id}:${order.fund_id}`;
-    const priorExposure = exposureByTeamFund.get(exposureKey) ?? 0;
-    try {
+    const exposureByTeamFund = new Map<string, number>();
+    for (const order of orders.rows) {
+      const exposureKey = `${order.team_id}:${order.fund_id}`;
+      const priorExposure = exposureByTeamFund.get(exposureKey) ?? 0;
+      
       const result = await executeOne(client, order, priorExposure);
-      if (order.order_type === 'buy') {
-        exposureByTeamFund.set(exposureKey, priorExposure + result.buyOrderValue);
+      if (result.success) {
+        if (order.order_type === 'buy') {
+          exposureByTeamFund.set(exposureKey, priorExposure + result.buyOrderValue);
+        }
+        // Audit success
+        await audit(
+          { event_type: 'order_executed', team_id: order.team_id, round, event_data: { order_id: order.id } },
+          client,
+        );
+      } else {
+        // Order failed, log it but continue
+        if (result.error && !result.error.includes('transaction is aborted')) {
+          console.warn(`Order ${order.id} failed: ${result.error}`);
+        }
       }
-      await audit({ event_type: 'order_executed', team_id: order.team_id, round, event_data: { order_id: order.id } });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Execution failed';
-      await recordExecution(client, order, 0, 0, 0, 0, 0, 'failed', message);
-      await audit({ event_type: 'order_failed', team_id: order.team_id, round, event_data: { order_id: order.id, error: message } });
+      
+      await client.query(
+        `DELETE FROM pending_orders WHERE id = $1`,
+        [order.id],
+      );
     }
-    await client.query(`DELETE FROM pending_orders WHERE id = $1`, [order.id]);
+  } catch (error) {
+    console.error("executePendingOrders failed:", error);
+    throw error;
   }
 }
 

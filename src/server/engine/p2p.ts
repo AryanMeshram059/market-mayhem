@@ -37,6 +37,61 @@ function feeForTradeValue(value: number): number {
   return value * BROKERAGE_RATE;
 }
 
+async function addHoldingWithCostBasis(
+  client: PoolClient,
+  input: { teamId: number; fundId: number; qty: number; totalCost: number },
+): Promise<void> {
+  await client.query(
+    `INSERT INTO holdings
+       (team_id, fund_id, quantity, avg_buy_price, total_invested, quantity_bought, last_updated)
+     VALUES ($1, $2, $3, $4, $5, $3, NOW())
+     ON CONFLICT (team_id, fund_id)
+     DO UPDATE SET quantity = holdings.quantity + EXCLUDED.quantity,
+                   total_invested = holdings.total_invested + EXCLUDED.total_invested,
+                   quantity_bought = holdings.quantity_bought + EXCLUDED.quantity_bought,
+                   avg_buy_price = CASE
+                     WHEN holdings.quantity + EXCLUDED.quantity > 0
+                     THEN (holdings.total_invested + EXCLUDED.total_invested)
+                          / (holdings.quantity + EXCLUDED.quantity)
+                     ELSE 0
+                   END,
+                   last_updated = NOW()`,
+    [
+      input.teamId,
+      input.fundId,
+      quantity(input.qty),
+      money(input.totalCost / input.qty),
+      money(input.totalCost),
+    ],
+  );
+}
+
+async function subtractHoldingWithCostBasis(
+  client: PoolClient,
+  input: { teamId: number; fundId: number; qty: number; reduceQuantity: boolean },
+): Promise<void> {
+  await client.query(
+    `UPDATE holdings
+     SET quantity = CASE WHEN $4 THEN quantity - $1 ELSE quantity END,
+         total_invested = CASE
+           WHEN (CASE WHEN $4 THEN quantity - $1 ELSE quantity END) <= 0 THEN 0
+           ELSE GREATEST(
+             0,
+             total_invested - (
+               COALESCE(NULLIF(avg_buy_price, 0), total_invested / NULLIF(quantity + CASE WHEN $4 THEN 0 ELSE $1 END, 0), 0) * $1
+             )
+           )
+         END,
+         avg_buy_price = CASE
+           WHEN (CASE WHEN $4 THEN quantity - $1 ELSE quantity END) <= 0 THEN 0
+           ELSE COALESCE(NULLIF(avg_buy_price, 0), total_invested / NULLIF(quantity + CASE WHEN $4 THEN 0 ELSE $1 END, 0), 0)
+         END,
+         last_updated = NOW()
+     WHERE team_id = $2 AND fund_id = $3`,
+    [quantity(input.qty), input.teamId, input.fundId, input.reduceQuantity],
+  );
+}
+
 async function reserveBuyCash(client: PoolClient, teamId: number, reserveAmount: number): Promise<void> {
   const rows = await client.query<{ cash: string }>(
     `SELECT cash FROM portfolios WHERE team_id = $1 FOR UPDATE`,
@@ -160,7 +215,7 @@ export async function proposeP2P(input: {
       team_id: input.proposerTeamId,
       round: input.round,
       event_data: { trade_id: rows.rows[0].id, ...input },
-    });
+    }, client);
 
     return { trade_id: rows.rows[0].id, status: 'awaiting_approval' as const };
   });
@@ -222,24 +277,33 @@ export async function acceptP2P(tradeId: string, teamId: number): Promise<void> 
       if (available < qty) {
         badRequest('Seller has insufficient holdings');
       }
-      await client.query(
-        `UPDATE holdings SET quantity = quantity - $1, last_updated = NOW() WHERE team_id = $2 AND fund_id = $3`,
-        [quantity(qty), sellerId, trade.fund_id],
-      );
+      await subtractHoldingWithCostBasis(client, {
+        teamId: sellerId,
+        fundId: trade.fund_id,
+        qty,
+        reduceQuantity: true,
+      });
     }
 
     await client.query(
       `UPDATE portfolios SET cash = cash + $1, last_updated = NOW() WHERE team_id = $2`,
       [money(sellerProceeds), sellerId],
     );
-    await client.query(
-      `INSERT INTO holdings (team_id, fund_id, quantity, last_updated)
-       VALUES ($1, $2, $3, NOW())
-       ON CONFLICT (team_id, fund_id)
-       DO UPDATE SET quantity = holdings.quantity + EXCLUDED.quantity,
-                     last_updated = NOW()`,
-      [buyerId, trade.fund_id, quantity(qty)],
-    );
+    if (trade.proposer_direction === 'sell') {
+      await subtractHoldingWithCostBasis(client, {
+        teamId: sellerId,
+        fundId: trade.fund_id,
+        qty,
+        reduceQuantity: false,
+      });
+    }
+
+    await addHoldingWithCostBasis(client, {
+      teamId: buyerId,
+      fundId: trade.fund_id,
+      qty,
+      totalCost: buyerCost,
+    });
     await client.query(
       `UPDATE p2p_trades
        SET status = 'completed', executed_at = NOW(), error_message = NULL, accepted_by_team_id = $1
@@ -251,7 +315,7 @@ export async function acceptP2P(tradeId: string, teamId: number): Promise<void> 
       event_type: 'p2p_executed',
       round: trade.round,
       event_data: { trade_id: trade.id, buyer_id: buyerId, seller_id: sellerId },
-    });
+    }, client);
   });
 }
 
@@ -286,7 +350,7 @@ export async function setP2PApproval(tradeId: string, adminUsername: string, app
       admin_username: adminUsername,
       round: trade.round,
       event_data: { trade_id: tradeId },
-    });
+    }, client);
   });
 }
 
@@ -311,7 +375,7 @@ export async function expireOpenP2P(client: PoolClient, round: number): Promise<
       event_type: 'p2p_expired',
       round,
       event_data: { trade_id: trade.id },
-    });
+    }, client);
   }
 }
 
