@@ -1,4 +1,4 @@
-export const TOTAL_ROUNDS = 10;
+export const TOTAL_ROUNDS = 15;
 export const TOTAL_TEAMS = 20;
 export const INVESTABLE_FUNDS = 11;
 export const MAX_NAV_CHANGE = 0.6;
@@ -17,10 +17,10 @@ export const SESSION_TTL_SECONDS = 4 * 60 * 60;
 export const PHASE_DURATIONS = {
   IDLE: 0,
   SETUP_OPEN: 7 * 60,
-  NEWS_REVEAL: 2 * 60,
+  NEWS_REVEAL: 1 * 60,
   TRADING_OPEN: 5 * 60,
-  ORDER_LOCK: 0,
-  RESULTS_DISPLAY: 0,
+  ORDER_LOCK: 2 * 60,
+  RESULTS_DISPLAY: 1 * 60,
 } as const;
 
 export const PHASES = [

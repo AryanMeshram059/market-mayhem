@@ -72,25 +72,13 @@ export default function RegisterPage() {
         </Link>
 
         <div className="grid gap-6 xl:grid-cols-[0.75fr_1.25fr]">
+
           <Card className="border-border/70 bg-card/95">
             <CardHeader>
               <Badge variant="outline" className="w-fit border-primary/35 bg-primary/10 px-3 py-1 font-mono tracking-[0.2em] text-primary">
                 REGISTRATION
               </Badge>
               <CardTitle className="text-3xl text-white">Create a team</CardTitle>
-              <CardDescription className="leading-6">
-                This form writes directly to the database. Email IDs and roll numbers are checked across all existing teams before saving.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4 text-sm leading-6 text-muted-foreground">
-              <InfoPanel title="What gets saved" description="Team name, password, captain details, and all four player records are stored for future login and event use." />
-              <InfoPanel title="Login after registration" description="Teams can log in using the saved team name or the generated team code, together with the same password." />
-              <InfoPanel title="Team size" description="One captain plus exactly four players are required so the stored dataset stays consistent." />
-            </CardContent>
-          </Card>
-
-          <Card className="border-border/70 bg-card/95">
-            <CardHeader>
               <CardTitle className="text-white">Registration form</CardTitle>
               <CardDescription>Fill everything once and the team will be remembered in the database.</CardDescription>
             </CardHeader>

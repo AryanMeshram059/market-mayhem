@@ -286,7 +286,7 @@ export async function startRound(adminUsername: string): Promise<GameState> {
            paused_at = NULL,
            remaining_time = NULL
        WHERE id = 1`,
-      [roundToStart, 'TRADING_OPEN', PHASE_DURATIONS.TRADING_OPEN, phaseStart],
+      [roundToStart, 'NEWS_REVEAL', PHASE_DURATIONS.NEWS_REVEAL, phaseStart],
     );
     await audit({
       event_type: 'admin_action',

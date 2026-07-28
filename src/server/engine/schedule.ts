@@ -41,9 +41,10 @@ export function validateSchedule(schedule: SchedulePayload): void {
     badRequest(`Schedule must contain ${INVESTABLE_FUNDS} investable funds`);
   }
 
+  const expectedNavPoints = TOTAL_ROUNDS + 1;
   for (const fund of schedule.funds) {
-    if (!fund.fund_code || fund.navValues.length !== TOTAL_ROUNDS) {
-      badRequest(`Fund ${fund.fund_code || '<missing>'} must have ${TOTAL_ROUNDS} NAV values`);
+    if (!fund.fund_code || fund.navValues.length !== expectedNavPoints) {
+      badRequest(`Fund ${fund.fund_code || '<missing>'} must have ${expectedNavPoints} NAV values`);
     }
     const base = fund.navValues[0];
     for (const [index, nav] of fund.navValues.entries()) {
@@ -90,8 +91,8 @@ export async function applyRoundNavs(client: PoolClient, round: number): Promise
     return;
   }
 
-  if (round < 1 || round > TOTAL_ROUNDS) {
-    console.warn(`Round ${round} is out of bounds (1-${TOTAL_ROUNDS})`);
+  if (round < 1 || round > TOTAL_ROUNDS + 1) {
+    console.warn(`NAV point ${round} is out of bounds (1-${TOTAL_ROUNDS + 1})`);
     return;
   }
 

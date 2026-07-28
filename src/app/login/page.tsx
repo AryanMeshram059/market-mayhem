@@ -67,15 +67,9 @@ export default function SharedLoginPage() {
       <div className="mx-auto grid min-h-screen w-full max-w-7xl gap-6 px-6 py-10 md:px-10 xl:grid-cols-[1.1fr_0.9fr]">
         <section className="flex flex-col justify-center">
           <div className="max-w-2xl space-y-5">
-            <Badge variant="outline" className="w-fit border-primary/35 bg-primary/10 px-3 py-1 font-mono tracking-[0.22em] text-primary">
-              SHARED ACCESS
-            </Badge>
             <h1 className="text-4xl font-semibold tracking-[-0.04em] text-white md:text-6xl">
               Enter with your team or admin credentials.
             </h1>
-            <p className="text-base leading-7 text-muted-foreground md:text-lg">
-              Teams can now log in with either the saved team name or the generated team code. Admin access remains available from the same screen.
-            </p>
           </div>
 
           <div className="mt-8 grid gap-4 md:grid-cols-2">
@@ -83,11 +77,6 @@ export default function SharedLoginPage() {
               icon={<TrendingUp className="size-5 text-primary" />}
               title="Team access"
               description="Use the registered team name or team code with the same stored password."
-            />
-            <FeatureCard
-              icon={<Shield className="size-5 text-primary" />}
-              title="Admin access"
-              description="Use the existing admin credentials to manage rounds, approvals, and leaderboard operations."
             />
           </div>
         </section>
@@ -125,9 +114,6 @@ export default function SharedLoginPage() {
                         required
                       />
                     </label>
-                    <p className="rounded-lg border border-border/70 bg-background/50 px-3 py-2 text-xs leading-5 text-muted-foreground">
-                      The backend now accepts both the stored <span className="font-mono text-foreground">team_name</span> and the generated <span className="font-mono text-foreground">team_code</span>.
-                    </p>
                   </>
                 ) : (
                   <label className="block space-y-1.5 text-sm font-medium">

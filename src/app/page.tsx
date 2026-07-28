@@ -17,9 +17,6 @@ export default function HomePage() {
             <h1 className="max-w-4xl text-5xl font-semibold tracking-[-0.04em] text-white md:text-7xl">
               Register your team, then enter the trading floor.
             </h1>
-            <p className="max-w-2xl text-base leading-7 text-muted-foreground md:text-lg">
-              The entry surface is now intentionally simple: register once, then log in and move through the game.
-            </p>
           </div>
         </div>
 

@@ -33,6 +33,13 @@ export async function POST(request: Request) {
       
       // Clear news feed
       await client.query(`DELETE FROM news_feed`);
+
+      // Reset fund prices to the sealed game starting NAV
+      await client.query(
+        `UPDATE funds
+         SET current_nav = CASE WHEN is_cash THEN 1 ELSE 100 END,
+             last_nav_update = NOW()`
+      );
       
       // Get the updated game state
       const rows = await client.query(
