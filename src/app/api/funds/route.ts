@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 import { query } from '@/server/db';
 import { fail, ok } from '@/server/http';
 

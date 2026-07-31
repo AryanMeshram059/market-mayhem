@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 import { leaderboard } from '@/server/engine/portfolio';
 import { fail, ok } from '@/server/http';
 

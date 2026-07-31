@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 import { authenticateAdmin } from '@/server/auth';
 import { pause } from '@/server/engine/state';
 import { authHeader, fail, ok } from '@/server/http';

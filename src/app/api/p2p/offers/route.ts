@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 import { authenticateTeam } from '@/server/auth';
 import { openP2POffers } from '@/server/engine/p2p';
 import { authHeader, fail, ok } from '@/server/http';

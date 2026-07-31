@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 import { authenticateTeam } from '@/server/auth';
 import { getPortfolio } from '@/server/engine/portfolio';
 import { authHeader, fail, ok } from '@/server/http';

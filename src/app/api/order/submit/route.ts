@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 import { authenticateTeam } from '@/server/auth';
 import { checkAndTransition } from '@/server/engine/state';
 import { submitOrder } from '@/server/engine/orders';

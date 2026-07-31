@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 import { logoutToken } from '@/server/auth';
 import { authHeader, fail, ok } from '@/server/http';
 

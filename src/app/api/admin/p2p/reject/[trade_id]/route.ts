@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 import { authenticateAdmin } from '@/server/auth';
 import { setP2PApproval } from '@/server/engine/p2p';
 import { authHeader, fail, ok } from '@/server/http';

@@ -15,6 +15,7 @@ import {
   money,
   useTeamDashboardData,
 } from '@/components/team-dashboard';
+import { PortfolioChart } from './portfolio-chart';
 
 export default function DashboardPage() {
   const { token, teamName, portfolio, gameState, loading, logout, tradableFunds, status, news } =
@@ -90,6 +91,16 @@ export default function DashboardPage() {
           </Card>
 
           {status ? <div className="notice font-mono text-sm">{status}</div> : null}
+
+          <Card className="border-border/70 bg-card/95">
+            <CardHeader>
+              <CardTitle className="text-white">Portfolio Value History</CardTitle>
+              <CardDescription>Round-by-round value using executed orders and official NAVs.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <PortfolioChart token={token} />
+            </CardContent>
+          </Card>
 
           <Card className="border-border/70 bg-card/95">
             <CardHeader className="gap-4">

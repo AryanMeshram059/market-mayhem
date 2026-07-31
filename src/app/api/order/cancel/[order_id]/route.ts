@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 import { authenticateTeam } from '@/server/auth';
 import { cancelOrder } from '@/server/engine/orders';
 import { authHeader, fail, ok } from '@/server/http';

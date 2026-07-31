@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 import { registerTeam } from '@/server/auth';
 import { fail, ok } from '@/server/http';
 

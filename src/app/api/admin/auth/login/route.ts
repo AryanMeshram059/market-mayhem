@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 import { loginAdmin } from '@/server/auth';
 import { fail, ok } from '@/server/http';
 

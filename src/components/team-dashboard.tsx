@@ -138,6 +138,17 @@ export function useTeamDashboardData() {
     };
   }, [token, fetchDashboardData, loadDashboard]);
 
+  useEffect(() => {
+    if (!token || !gameState?.phase_ends_at || gameState.is_paused) return;
+
+    const delay = Math.max(0, new Date(gameState.phase_ends_at).getTime() - Date.now()) + 500;
+    const timeoutId = window.setTimeout(() => {
+      void loadDashboard(token);
+    }, delay);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [gameState?.phase_ends_at, gameState?.is_paused, loadDashboard, token]);
+
   const tradableFunds = useMemo(() => funds.filter((fund) => !fund.is_cash), [funds]);
 
   function logout() {

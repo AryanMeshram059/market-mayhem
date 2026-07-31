@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 import { authenticateTeam } from '@/server/auth';
 import { checkAndTransition } from '@/server/engine/state';
 import { acceptP2P } from '@/server/engine/p2p';

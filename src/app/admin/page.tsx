@@ -68,6 +68,8 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(Boolean(initialToken));
   const [selectedTeam, setSelectedTeam] = useState<AdminTeam | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [now, setNow] = useState(Date.now());
+  const [displayTimeRemaining, setDisplayTimeRemaining] = useState(0);
 
   const fetchAdminData = useCallback(async (activeToken: string) => {
     const [nextState, nextTeams, nextP2p, nextAudit, nextNews] = await Promise.all([
@@ -108,6 +110,22 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
+    const intervalId = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
+    if (!state || state.is_paused || !state.phase_ends_at) {
+      setDisplayTimeRemaining(state?.time_remaining ?? 0);
+      return;
+    }
+
+    setDisplayTimeRemaining(
+      Math.max(0, Math.ceil((new Date(state.phase_ends_at).getTime() - now) / 1000)),
+    );
+  }, [now, state]);
+
+  useEffect(() => {
     if (!token) return;
 
     const activeToken = token;
@@ -144,6 +162,17 @@ export default function AdminPage() {
       window.clearInterval(intervalId);
     };
   }, [token, fetchAdminData, loadAdmin]);
+
+  useEffect(() => {
+    if (!token || !state?.phase_ends_at || state.is_paused) return;
+
+    const delay = Math.max(0, new Date(state.phase_ends_at).getTime() - Date.now()) + 500;
+    const timeoutId = window.setTimeout(() => {
+      void loadAdmin(token);
+    }, delay);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [loadAdmin, state?.phase_ends_at, state?.is_paused, token]);
 
   const sortedTeams = useMemo(() => [...teams].sort((a, b) => b.portfolio.total_value - a.portfolio.total_value || a.id - b.id), [teams]);
   const conductedTrades = useMemo(() => audit.filter((row) => ['order_executed', 'order_failed', 'p2p_executed', 'p2p_failed'].includes(row.event_type)), [audit]);
@@ -214,7 +243,7 @@ export default function AdminPage() {
 
   return (
     <div className="dark min-h-screen bg-background text-foreground">
-      <header className="border-b border-border/70 bg-[#0b0d0c] px-4 py-4 md:px-8"><div className="mx-auto flex max-w-7xl flex-col gap-4 md:flex-row md:items-center md:justify-between"><div><Link href="/" className="font-mono text-2xl font-black tracking-tight text-primary">MARKET_MAYHEM</Link><p className="text-sm text-muted-foreground">Admin control room</p></div><div className="flex flex-wrap items-center gap-3">{state ? <div className="flex items-center gap-3 rounded-md border bg-muted/30 px-3 py-2 font-mono text-xs"><Clock3 className="size-4 text-primary" /><span>Round {state.round}</span><Separator orientation="vertical" className="h-4" /><span>{phaseLabel(state)}</span><Separator orientation="vertical" className="h-4" /><span>{formatTime(state.time_remaining)}</span></div> : null}<Button variant="outline" size="sm" onClick={() => token && void loadAdmin(token)}><RefreshCw />Refresh</Button><Button variant="ghost" size="sm" onClick={logout}><LogOut />Logout</Button></div></div></header>
+      <header className="border-b border-border/70 bg-[#0b0d0c] px-4 py-4 md:px-8"><div className="mx-auto flex max-w-7xl flex-col gap-4 md:flex-row md:items-center md:justify-between"><div><Link href="/" className="font-mono text-2xl font-black tracking-tight text-primary">MARKET_MAYHEM</Link><p className="text-sm text-muted-foreground">Admin control room</p></div><div className="flex flex-wrap items-center gap-3">{state ? <div className="flex items-center gap-3 rounded-md border bg-muted/30 px-3 py-2 font-mono text-xs"><Clock3 className="size-4 text-primary" /><span>Round {state.round}</span><Separator orientation="vertical" className="h-4" /><span>{phaseLabel(state)}</span><Separator orientation="vertical" className="h-4" /><span>{formatTime(displayTimeRemaining)}</span></div> : null}<Button variant="outline" size="sm" onClick={() => token && void loadAdmin(token)}><RefreshCw />Refresh</Button><Button variant="ghost" size="sm" onClick={logout}><LogOut />Logout</Button></div></div></header>
 
       <main className="mx-auto grid max-w-7xl gap-5 p-4 md:p-8 xl:grid-cols-[minmax(0,1.3fr)_360px]"><section className="space-y-5">{message ? <div className="notice font-mono text-sm">{message}</div> : null}<div className="grid gap-4 md:grid-cols-3"><SummaryCard title="Current phase" value={state ? phaseLabel(state) : 'Loading'} subtitle="Backend-authoritative phase machine" /><SummaryCard title="Published event" value={news?.news ? `Round ${news.news.round}` : 'None'} subtitle={news?.news ? 'Latest broadcast to teams' : 'No current event released'} /><SummaryCard title="Open offers" value={String(p2p.length)} subtitle="Direct team offers currently awaiting a team response" /></div>
 

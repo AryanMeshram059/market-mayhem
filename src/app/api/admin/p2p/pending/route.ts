@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 import { authenticateAdmin } from '@/server/auth';
 import { pendingP2P } from '@/server/engine/p2p';
 import { authHeader, fail, ok } from '@/server/http';

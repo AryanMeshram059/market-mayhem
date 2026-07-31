@@ -4,7 +4,6 @@ import { ChevronDown, ArrowDownLeft, ArrowUpRight } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Fund, HoldingView } from '@/domain/types';
@@ -36,11 +35,13 @@ export function ExpandableFund({
   submitting,
   round,
 }: ExpandableFundProps) {
-  const [orderType, setOrderType] = useState<'buy' | 'sell'>('buy');
   const [quantity, setQuantity] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const estimatedValue = Number(quantity) > 0 ? Number(quantity) * fund.current_nav : 0;
+  const requestedQuantity = Number(quantity);
+  const canSubmit = tradableNow && !isSubmitting && !submitting && requestedQuantity > 0;
+  const canSell = canSubmit && Boolean(holding) && requestedQuantity <= (holding?.quantity ?? 0);
 
   const handleSubmit = async (type: 'buy' | 'sell') => {
     if (!quantity || Number(quantity) <= 0) return;
@@ -133,14 +134,7 @@ export function ExpandableFund({
             <div>
               <h3 className="text-sm font-semibold text-white mb-3">Place Order</h3>
               <div className="space-y-4 rounded-lg border border-border/70 bg-background/50 p-4">
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <label className="space-y-1.5 text-sm font-medium">
-                    <span className="text-muted-foreground">Action</span>
-                    <Select value={orderType} onChange={(e) => setOrderType(e.target.value as 'buy' | 'sell')}>
-                      <option value="buy">Buy</option>
-                      <option value="sell">Sell</option>
-                    </Select>
-                  </label>
+                <div className="grid gap-3 sm:grid-cols-2">
                   <label className="space-y-1.5 text-sm font-medium">
                     <span className="text-muted-foreground">Quantity</span>
                     <Input 
@@ -161,7 +155,7 @@ export function ExpandableFund({
                   </label>
                 </div>
 
-                {orderType === 'sell' && holding && (
+                {holding && (
                   <p className="text-xs text-muted-foreground">
                     Available to sell: {units(holding.quantity)} units
                   </p>
@@ -169,24 +163,16 @@ export function ExpandableFund({
 
                 <div className="flex gap-2">
                   <Button
-                    variant="outline"
-                    className="flex-1"
-                    disabled={!tradableNow || isSubmitting || !quantity || Number(quantity) <= 0}
+                    className="flex-1 border-emerald-500/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 hover:text-emerald-200"
+                    disabled={!canSubmit}
                     onClick={() => void handleSubmit('buy')}
                   >
                     <ArrowDownLeft className="size-4" />
                     Buy
                   </Button>
                   <Button
-                    variant="outline"
-                    className="flex-1"
-                    disabled={
-                      !tradableNow || 
-                      isSubmitting || 
-                      !quantity || 
-                      Number(quantity) <= 0 ||
-                      (holding ? Number(quantity) > holding.quantity : false)
-                    }
+                    className="flex-1 border-rose-500/40 bg-rose-500/15 text-rose-300 hover:bg-rose-500/25 hover:text-rose-200"
+                    disabled={!canSell}
                     onClick={() => void handleSubmit('sell')}
                   >
                     <ArrowUpRight className="size-4" />
@@ -200,9 +186,4 @@ export function ExpandableFund({
       )}
     </div>
   );
-}
-
-// Helper to format number
-function number(val: string): number {
-  return Number(val) || 0;
 }

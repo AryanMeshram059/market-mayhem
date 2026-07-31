@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 import { checkAndTransition } from '@/server/engine/state';
 import { fail, ok } from '@/server/http';
 

@@ -2,36 +2,29 @@
 
 import { useEffect, useState } from 'react';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import type { Fund } from '@/domain/types';
 import { apiRequest } from '@/lib/browserApi';
 
-type FundChartProps = {
-  fund: Fund;
+type PortfolioPoint = {
   round: number;
+  value: number;
 };
 
-type FundHistoryPoint = {
-  round: number;
-  nav: number;
-};
-
-export function FundChart({ fund, round }: FundChartProps) {
-  const [data, setData] = useState<FundHistoryPoint[]>([]);
+export function PortfolioChart({ token }: { token: string | null }) {
+  const [data, setData] = useState<PortfolioPoint[]>([]);
 
   useEffect(() => {
+    if (!token) return;
     let cancelled = false;
 
     async function loadHistory() {
       try {
-        const history = await apiRequest<FundHistoryPoint[]>(
-          `/api/funds/${encodeURIComponent(fund.fund_code)}/history`,
-        );
+        const history = await apiRequest<PortfolioPoint[]>('/api/portfolio/history', { token });
         if (!cancelled) {
           setData(history);
         }
       } catch {
         if (!cancelled) {
-          setData([{ round: Math.max(0, round - 1), nav: fund.current_nav }]);
+          setData([]);
         }
       }
     }
@@ -40,7 +33,7 @@ export function FundChart({ fund, round }: FundChartProps) {
     return () => {
       cancelled = true;
     };
-  }, [fund.current_nav, fund.fund_code, round]);
+  }, [token]);
 
   return (
     <div className="h-64 w-full rounded-lg bg-background/50 p-4">
@@ -48,16 +41,22 @@ export function FundChart({ fund, round }: FundChartProps) {
         <LineChart data={data}>
           <CartesianGrid strokeDasharray="3 3" stroke="#333" />
           <XAxis dataKey="round" stroke="#999" allowDecimals={false} />
-          <YAxis stroke="#999" domain={['dataMin - 5', 'dataMax + 5']} />
+          <YAxis stroke="#999" domain={['dataMin - 10000000', 'dataMax + 10000000']} />
           <Tooltip
             contentStyle={{ backgroundColor: '#1a1d1c', border: '1px solid #333' }}
-            formatter={(value) => `₹${Number(value).toFixed(2)}`}
+            formatter={(value) =>
+              new Intl.NumberFormat('en-IN', {
+                style: 'currency',
+                currency: 'INR',
+                maximumFractionDigits: 0,
+              }).format(Number(value))
+            }
             labelFormatter={(label) => `Round ${label}`}
           />
           <Line
             type="monotone"
-            dataKey="nav"
-            stroke="#8b5cf6"
+            dataKey="value"
+            stroke="#22c55e"
             strokeWidth={2}
             dot
             isAnimationActive={false}
