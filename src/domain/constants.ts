@@ -3,7 +3,7 @@ export const TOTAL_TEAMS = 20;
 export const INVESTABLE_FUNDS = 11;
 export const MAX_NAV_CHANGE = 0.6;
 
-export const STARTING_CAPITAL = 1_000_000_000; // Rs 100 Cr
+export const STARTING_CAPITAL = 100_000; // Rs 1 lakh
 export const BROKERAGE_RATE = 0.002;
 export const SLIPPAGE_THRESHOLD_RATE = 0.25;
 export const SLIPPAGE_RATE = 0.02;

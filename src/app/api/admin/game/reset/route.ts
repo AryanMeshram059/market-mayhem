@@ -1,6 +1,7 @@
 export const runtime = 'nodejs';
 
 import { authenticateAdmin } from '@/server/auth';
+import { STARTING_CAPITAL } from '@/domain/constants';
 import { query, transaction } from '@/server/db';
 import { authHeader, fail, ok } from '@/server/http';
 
@@ -23,8 +24,9 @@ export async function POST(request: Request) {
       // Reset all team portfolios to starting capital
       await client.query(
         `UPDATE portfolios
-         SET cash = 1000000000,
-             last_updated = NOW()`
+         SET cash = $1,
+             last_updated = NOW()`,
+        [STARTING_CAPITAL],
       );
       
       // Clear all holdings
