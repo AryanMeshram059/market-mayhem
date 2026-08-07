@@ -292,7 +292,7 @@ function phaseLabel(state: GameState) {
     case 'SETUP_OPEN': return 'Setup window';
     case 'NEWS_REVEAL': return 'Read window';
     case 'TRADING_OPEN': return 'Trade window';
-    case 'ORDER_LOCK': return 'Freeze / compute';
+    case 'ORDER_LOCK': return 'Computing results';
     case 'RESULTS_DISPLAY': return 'Leaderboard update';
     default: return state.phase;
   }

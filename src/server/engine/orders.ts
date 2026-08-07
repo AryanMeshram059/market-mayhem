@@ -12,6 +12,7 @@ interface PendingOrder {
   order_type: OrderType;
   quantity: string;
   round: number;
+  reserved_cash?: string;
   created_at?: string;
 }
 
@@ -216,6 +217,7 @@ export async function submitOrder(input: {
 
   let acceptedQuantity = input.quantity;
   let clipped = false;
+  let reservedCashForOrder = 0;
   if (input.type === 'sell') {
     const available = projectedHoldings.get(input.fundId) ?? 0;
     if (available < acceptedQuantity) {
@@ -235,6 +237,12 @@ export async function submitOrder(input: {
       badRequest('Insufficient cash for even the minimum affordable quantity');
     }
     clipped = acceptedQuantity < input.quantity;
+    reservedCashForOrder = buyExecutionTotals(
+      fund.nav,
+      acceptedQuantity,
+      startingCapital,
+      priorExposure,
+    ).total;
   }
 
   const nextProjectedHoldings = new Map<number, number>(projectedHoldings);
@@ -250,12 +258,37 @@ export async function submitOrder(input: {
     badRequest(`A team can hold at most ${MAX_DISTINCT_FUNDS} distinct funds`);
   }
 
-  const rows = await query<{ id: string }>(
-    `INSERT INTO pending_orders (team_id, fund_id, order_type, quantity, round)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id`,
-    [input.teamId, input.fundId, input.type, quantity(acceptedQuantity), state.round],
-  );
+  const rows = await transaction(async (client) => {
+    if (reservedCashForOrder > 0) {
+      const updated = await client.query<{ id: number }>(
+        `UPDATE portfolios
+         SET cash = cash - $1,
+             last_updated = NOW()
+         WHERE team_id = $2
+           AND cash >= $1
+         RETURNING team_id AS id`,
+        [money(reservedCashForOrder), input.teamId],
+      );
+      if (!updated.rows[0]) {
+        badRequest('Insufficient cash');
+      }
+    }
+
+    const inserted = await client.query<{ id: string }>(
+      `INSERT INTO pending_orders (team_id, fund_id, order_type, quantity, round, reserved_cash)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id`,
+      [
+        input.teamId,
+        input.fundId,
+        input.type,
+        quantity(acceptedQuantity),
+        state.round,
+        money(reservedCashForOrder),
+      ],
+    );
+    return inserted.rows;
+  });
 
   await audit({
     event_type: 'order_submitted',
@@ -266,6 +299,7 @@ export async function submitOrder(input: {
       phase: state.phase,
       ...input,
       accepted_quantity: acceptedQuantity,
+      reserved_cash: reservedCashForOrder,
       clipped,
     },
   });
@@ -302,22 +336,13 @@ async function executeOne(
 
       if (order.order_type === 'buy') {
         const totals = buyExecutionTotals(nav, qty, startingCapital, priorExposure);
-        const cash = await client.query(`SELECT cash FROM portfolios WHERE team_id = $1 FOR UPDATE`, [order.team_id]);
-        const balance = Number(cash.rows[0]?.cash ?? 0);
-        if (balance < totals.total) {
-          return { success: false, buyOrderValue: 0, error: 'Insufficient cash' };
-        }
-
-        await client.query(
-          `UPDATE portfolios SET cash = cash - $1, last_updated = NOW() WHERE team_id = $2`,
-          [money(totals.total), order.team_id],
-        );
+        const reservedCash = Number(order.reserved_cash ?? totals.total);
         
         await addHoldingWithCostBasis(client, {
           teamId: order.team_id,
           fundId: order.fund_id,
           qty,
-          totalCost: totals.total,
+          totalCost: reservedCash,
         });
         await recordExecution(
           client,
@@ -326,7 +351,7 @@ async function executeOne(
           totals.effectiveNav,
           totals.slippage,
           totals.fee,
-          totals.total,
+          reservedCash,
           'completed',
         );
         return { success: true, buyOrderValue: totals.orderValue };
@@ -412,7 +437,7 @@ async function recordExecution(
 export async function executePendingOrders(client: PoolClient, round: number): Promise<void> {
   try {
     const orders = await client.query<PendingOrder>(
-      `SELECT id, team_id, fund_id, order_type, quantity, round
+      `SELECT id, team_id, fund_id, order_type, quantity, round, reserved_cash
        FROM pending_orders
        WHERE round = $1
        ORDER BY created_at, id`,
@@ -439,6 +464,16 @@ export async function executePendingOrders(client: PoolClient, round: number): P
         if (result.error && !result.error.includes('transaction is aborted')) {
           console.warn(`Order ${order.id} failed: ${result.error}`);
         }
+        const reservedCash = Number(order.reserved_cash ?? 0);
+        if (reservedCash > 0) {
+          await client.query(
+            `UPDATE portfolios
+             SET cash = cash + $1,
+                 last_updated = NOW()
+             WHERE team_id = $2`,
+            [money(reservedCash), order.team_id],
+          );
+        }
       }
       
       await client.query(
@@ -455,7 +490,8 @@ export async function executePendingOrders(client: PoolClient, round: number): P
 export async function pendingOrders(teamId: number): Promise<unknown[]> {
   return query(
     `SELECT po.id AS order_id, po.fund_id, f.fund_code, f.fund_name,
-            po.order_type AS type, po.quantity, po.created_at, po.round
+            po.order_type AS type, po.quantity, po.created_at, po.round,
+            COALESCE(po.reserved_cash, 0) AS reserved_cash
      FROM pending_orders po
      JOIN funds f ON f.id = po.fund_id
      WHERE po.team_id = $1
@@ -469,15 +505,28 @@ export async function cancelOrder(teamId: number, orderId: string): Promise<void
   if (!orderWindowOpen(state.phase)) {
     badRequest(`Cannot cancel during ${state.phase}`);
   }
-  const deleted = await query(
-    `DELETE FROM pending_orders
-     WHERE id = $1 AND team_id = $2
-     RETURNING id`,
-    [orderId, teamId],
-  );
-  if (deleted.length === 0) {
-    notFound('Order not found');
-  }
+  await transaction(async (client) => {
+    const deleted = await client.query<{ id: string; reserved_cash: string }>(
+      `DELETE FROM pending_orders
+       WHERE id = $1 AND team_id = $2
+       RETURNING id, COALESCE(reserved_cash, 0) AS reserved_cash`,
+      [orderId, teamId],
+    );
+    if (!deleted.rows[0]) {
+      notFound('Order not found');
+    }
+
+    const reservedCash = Number(deleted.rows[0].reserved_cash);
+    if (reservedCash > 0) {
+      await client.query(
+        `UPDATE portfolios
+         SET cash = cash + $1,
+             last_updated = NOW()
+         WHERE team_id = $2`,
+        [money(reservedCash), teamId],
+      );
+    }
+  });
 }
 
 export async function modifyOrder(teamId: number, orderId: string, newQuantity: number): Promise<void> {
@@ -488,16 +537,82 @@ export async function modifyOrder(teamId: number, orderId: string, newQuantity: 
   if (!orderWindowOpen(state.phase)) {
     badRequest(`Cannot modify during ${state.phase}`);
   }
-  const updated = await query(
-    `UPDATE pending_orders
-     SET quantity = $1
-     WHERE id = $2 AND team_id = $3
-     RETURNING id`,
-    [quantity(newQuantity), orderId, teamId],
-  );
-  if (updated.length === 0) {
-    notFound('Order not found');
-  }
+
+  await transaction(async (client) => {
+    const orderRows = await client.query<PendingOrder>(
+      `SELECT id, team_id, fund_id, order_type, quantity, round, reserved_cash, created_at
+       FROM pending_orders
+       WHERE id = $1 AND team_id = $2
+       FOR UPDATE`,
+      [orderId, teamId],
+    );
+    const order = orderRows.rows[0];
+    if (!order) {
+      notFound('Order not found');
+    }
+
+    let nextReservedCash = 0;
+    if (order.order_type === 'buy') {
+      const fundRows = await client.query<{ current_nav: string }>(
+        `SELECT current_nav FROM funds WHERE id = $1 AND is_cash = FALSE`,
+        [order.fund_id],
+      );
+      const startingCapitalRows = await client.query<{ starting_capital: string }>(
+        `SELECT starting_capital FROM teams WHERE id = $1`,
+        [teamId],
+      );
+      const priorOrders = await client.query<PendingOrder>(
+        `SELECT fund_id, order_type, quantity
+         FROM pending_orders
+         WHERE team_id = $1
+           AND round = $2
+           AND fund_id = $3
+           AND order_type = 'buy'
+           AND (created_at, id) < ($4, $5)
+         ORDER BY created_at, id`,
+        [teamId, order.round, order.fund_id, order.created_at, order.id],
+      );
+      const nav = Number(fundRows.rows[0]?.current_nav ?? 0);
+      const startingCapital = Number(startingCapitalRows.rows[0]?.starting_capital ?? STARTING_CAPITAL);
+      const priorExposure = priorOrders.rows.reduce((sum, priorOrder) => {
+        return sum + Number(priorOrder.quantity) * nav;
+      }, 0);
+      nextReservedCash = buyExecutionTotals(nav, newQuantity, startingCapital, priorExposure).total;
+
+      const currentReservedCash = Number(order.reserved_cash ?? 0);
+      const cashDelta = nextReservedCash - currentReservedCash;
+      if (cashDelta > 0) {
+        const updated = await client.query<{ team_id: number }>(
+          `UPDATE portfolios
+           SET cash = cash - $1,
+               last_updated = NOW()
+           WHERE team_id = $2
+             AND cash >= $1
+           RETURNING team_id`,
+          [money(cashDelta), teamId],
+        );
+        if (!updated.rows[0]) {
+          badRequest('Insufficient cash');
+        }
+      } else if (cashDelta < 0) {
+        await client.query(
+          `UPDATE portfolios
+           SET cash = cash + $1,
+               last_updated = NOW()
+           WHERE team_id = $2`,
+          [money(Math.abs(cashDelta)), teamId],
+        );
+      }
+    }
+
+    await client.query(
+      `UPDATE pending_orders
+       SET quantity = $1,
+           reserved_cash = $2
+       WHERE id = $3 AND team_id = $4`,
+      [quantity(newQuantity), money(nextReservedCash), orderId, teamId],
+    );
+  });
 }
 
 export async function executeAllPendingForRound(round: number): Promise<void> {

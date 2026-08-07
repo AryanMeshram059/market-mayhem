@@ -19,7 +19,7 @@ export const PHASE_DURATIONS = {
   SETUP_OPEN: 7 * 60,
   NEWS_REVEAL: 1 * 60,
   TRADING_OPEN: 5 * 60,
-  ORDER_LOCK: 2 * 60,
+  ORDER_LOCK: 0,
   RESULTS_DISPLAY: 1 * 60,
 } as const;
 

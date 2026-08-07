@@ -80,7 +80,7 @@ export default function RegisterPage() {
               </Badge>
               <CardTitle className="text-3xl text-white">Create a team</CardTitle>
               <CardTitle className="text-white">Registration form</CardTitle>
-              <CardDescription>Fill everything once and the team will be remembered in the database.</CardDescription>
+              <CardDescription>Add a captain and any optional players. The team will be remembered in the database.</CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={submit} className="space-y-6">
@@ -109,20 +109,20 @@ export default function RegisterPage() {
                 </section>
 
                 <section className="space-y-4">
-                  <SectionTitle icon={<Users className="size-4 text-primary" />} title="Players 2-5" />
+                  <SectionTitle icon={<Users className="size-4 text-primary" />} title="Optional players 2-5" />
                   <div className="space-y-4">
                     {players.map((player, index) => (
                       <div key={index} className="rounded-xl border border-border/70 bg-background/45 p-4">
-                        <p className="mb-3 font-medium text-white">Player {index + 2}</p>
+                        <p className="mb-3 font-medium text-white">Player {index + 2} optional</p>
                         <div className="grid gap-4 md:grid-cols-3">
                           <Field label="Name">
-                            <Input value={player.name} onChange={(event) => updatePlayer(index, 'name', event.target.value)} required />
+                            <Input value={player.name} onChange={(event) => updatePlayer(index, 'name', event.target.value)} />
                           </Field>
                           <Field label="Email">
-                            <Input type="email" value={player.email} onChange={(event) => updatePlayer(index, 'email', event.target.value)} required />
+                            <Input type="email" value={player.email} onChange={(event) => updatePlayer(index, 'email', event.target.value)} />
                           </Field>
                           <Field label="Roll number">
-                            <Input value={player.roll_number} onChange={(event) => updatePlayer(index, 'roll_number', event.target.value)} required />
+                            <Input value={player.roll_number} onChange={(event) => updatePlayer(index, 'roll_number', event.target.value)} />
                           </Field>
                         </div>
                       </div>

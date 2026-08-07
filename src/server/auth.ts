@@ -191,23 +191,25 @@ export async function registerTeam(input: {
     rollNumber: normalizeRoll(input.captain.rollNumber),
     details: input.captain.details ?? {},
   };
-  const players = input.players.map((player) => ({
-    name: player.name.trim(),
-    email: normalizeEmail(player.email),
-    rollNumber: normalizeRoll(player.rollNumber),
-    details: player.details ?? {},
-  }));
+  const players = input.players
+    .map((player) => ({
+      name: player.name.trim(),
+      email: normalizeEmail(player.email),
+      rollNumber: normalizeRoll(player.rollNumber),
+      details: player.details ?? {},
+    }))
+    .filter((player) => player.name || player.email || player.rollNumber);
 
   if (!teamName) badRequest('Team name is required');
   if (password.length < 6) badRequest('Team password must be at least 6 characters long');
   if (!captain.name || !captain.email || !captain.rollNumber) {
     badRequest('Captain name, email, and roll number are required');
   }
-  if (players.length !== 4) {
-    badRequest('Exactly four additional players are required');
+  if (players.length > 4) {
+    badRequest('A team can include at most four additional players');
   }
   if (players.some((player) => !player.name || !player.email || !player.rollNumber)) {
-    badRequest('Each player must include name, email, and roll number');
+    badRequest('Each added player must include name, email, and roll number');
   }
 
   const emails = [captain.email, ...players.map((player) => player.email)];

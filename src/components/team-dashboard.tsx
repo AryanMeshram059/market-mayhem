@@ -110,7 +110,6 @@ export function useTeamDashboardData() {
     let cancelled = false;
 
     async function syncDashboard() {
-      setLoading(true);
       try {
         const data = await fetchDashboardData(activeToken);
         if (cancelled) return;
@@ -132,9 +131,13 @@ export function useTeamDashboardData() {
     }
 
     void syncDashboard();
+    const intervalId = window.setInterval(() => {
+      void syncDashboard();
+    }, 5000);
 
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
     };
   }, [token, fetchDashboardData, loadDashboard]);
 
@@ -432,7 +435,7 @@ export function phaseLabel(state: GameState) {
     case 'TRADING_OPEN':
       return 'Trade window';
     case 'ORDER_LOCK':
-      return 'Freeze / compute';
+      return 'Computing results';
     case 'RESULTS_DISPLAY':
       return 'Leaderboard update';
     default:

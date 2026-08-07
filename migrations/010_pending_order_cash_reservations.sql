@@ -1,0 +1,2 @@
+ALTER TABLE pending_orders
+  ADD COLUMN IF NOT EXISTS reserved_cash NUMERIC(15,4) DEFAULT 0;

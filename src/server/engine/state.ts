@@ -78,7 +78,7 @@ function nextPhase(row: GameStateRow): { phase: GamePhase; round: number; durati
     case 'NEWS_REVEAL':
       return { phase: 'TRADING_OPEN', round: row.current_round, duration: PHASE_DURATIONS.TRADING_OPEN };
     case 'TRADING_OPEN':
-      return { phase: 'ORDER_LOCK', round: row.current_round, duration: PHASE_DURATIONS.ORDER_LOCK };
+      return { phase: 'RESULTS_DISPLAY', round: row.current_round, duration: PHASE_DURATIONS.RESULTS_DISPLAY };
     case 'ORDER_LOCK':
       return { phase: 'RESULTS_DISPLAY', round: row.current_round, duration: PHASE_DURATIONS.RESULTS_DISPLAY };
     case 'RESULTS_DISPLAY':

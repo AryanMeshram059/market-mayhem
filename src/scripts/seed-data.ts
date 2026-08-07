@@ -28,6 +28,7 @@ async function restoreRoundConstraints(): Promise<void> {
     );
 
     await client.query(`ALTER TABLE pending_orders DROP CONSTRAINT IF EXISTS pending_orders_round_check`);
+    await client.query(`ALTER TABLE pending_orders ADD COLUMN IF NOT EXISTS reserved_cash NUMERIC(15,4) DEFAULT 0`);
     await client.query(
       `ALTER TABLE pending_orders ADD CONSTRAINT pending_orders_round_check CHECK (round BETWEEN 1 AND 15)`,
     );
